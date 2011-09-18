@@ -1,0 +1,336 @@
+#!/usr/bin/python
+
+import collections
+import heapq
+import os
+import signal
+import sys
+import time
+from operator import itemgetter
+from threading import Thread
+from optparse import OptionParser
+
+class LogLevel(object):
+    def __init__(self, priority, name):
+        self.priority = priority
+        self.name = name
+
+    def __str__(self):
+        return self.name
+
+    def __repr__(self):
+        return self.name
+
+LogLevel.TRACE = LogLevel(0, 'TRACE')
+LogLevel.DEBUG = LogLevel(1, 'DEBUG')
+LogLevel.INFO = LogLevel(2, 'INFO')
+LogLevel.WARN = LogLevel(3, 'WARN')
+LogLevel.ERROR = LogLevel(4, 'ERROR')
+LogLevel.FATAL = LogLevel(5, 'FATAL')
+
+LogEntry = collections.namedtuple('LogEntry', 'ts fid i level thread source_class source_location message')
+
+class Log4jParser(object):
+    def __init__(self):
+        # default log4j pattern: %d [%p] %t: %l - %m%n
+        self.columns = 4
+        self.col_thread = 1
+        self.col_location = 2
+        self.col_message = 3
+
+    def auto_configure(self, fd):
+        """try to auto-configure the parser"""
+        try:
+            for entry in self.read(0, fd):
+                break
+        except ValueError:
+            # log4j pattern without thread name: %d [%p] %l - %m%n
+            self.columns = 3
+            self.col_thread = None
+            self.col_location = 1
+            self.col_message = 2
+        fd.seek(0)
+
+    def read(self, fid, fd):
+        """read log4j formatted log file"""
+        maxsplit = self.columns - 1
+        col_thread = self.col_thread
+        col_location = self.col_location
+        col_message = self.col_message
+
+        lastline = None
+        i = 0
+        while True:
+            line = lastline or fd.readline()
+            if not line:
+                break
+            ts = line[:23]
+            if ts[:2] != '20':
+                continue
+            cols = line[24:].split(None, maxsplit)
+            c = cols[0][1]
+            if c == 'T':
+                level = LogLevel.TRACE
+            elif c == 'D':
+                level = LogLevel.DEBUG
+            elif c == 'I':
+                level = LogLevel.INFO
+            elif c == 'W':
+                level = LogLevel.WARN
+            elif c == 'E':
+                level = LogLevel.ERROR
+            else:
+                level = LogLevel.FATAL
+            thread = col_thread and cols[col_thread][:-1] or None
+            source_class, source_location = cols[col_location].split('(', 1)
+            msg = cols[col_message][2:]
+            while True:
+                lastline = fd.readline()
+                if not lastline:
+                    break
+                if lastline[:2] == '20' and lastline[23:25] == ' [':
+                    # start of new log entry
+                    break
+                msg += lastline
+                lastline = None
+            yield LogEntry(fid=fid, ts=ts, i=i, level=level, thread=thread, source_class=source_class, source_location=source_location.rstrip(')'), message=msg.rstrip())
+            i += 1
+    
+class LogReader(Thread):
+    def __init__(self, fid, fname, parser, receiver, tail=0, follow=False, filterdef=None):
+        Thread.__init__(self, name='LogReader-%d' % (fid,))
+        self.fid = fid
+        self.fname = fname
+        self.parser = parser
+        self.receiver = receiver
+        self.tail = tail
+        self.follow = follow
+        self.filterdef = filterdef or LogFilter()
+
+    def _seek_tail(self, fd, n):
+        """seek to start of "tail" (last n lines)"""
+        s = -1024 * n
+        fd.seek(s, 2)
+        contents = fd.read()
+        e = len(contents)
+        i = 0
+        while e >= 0:
+            e = contents.rfind('\n', 0, e)
+            if e >= 0:
+                i += 1
+                if i >= n:
+                    fd.seek(s + e, 2)
+                    break
+
+    def run(self):
+        fid = self.fid
+        receiver = self.receiver
+        filt = self.filterdef
+        with open(self.fname, 'rb') as fd:
+            self.parser.auto_configure(fd)
+            if self.tail:
+                self._seek_tail(fd, self.tail)
+            while True:
+                where = fd.tell()
+                had_entry = False
+                for entry in self.parser.read(fid, fd):
+                    if filt.matches(entry):
+                        receiver.add(entry)
+                    #print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
+                    had_entry = True
+                if not self.follow:
+                    receiver.eof(fid)
+                    break
+                if not had_entry:
+                    time.sleep(0.5)
+                    fd.seek(where)
+                
+
+class Watcher:
+    """this class solves two problems with multithreaded
+    programs in Python, (1) a signal might be delivered
+    to any thread (which is just a malfeature) and (2) if
+    the thread that gets the signal is waiting, the signal
+    is ignored (which is a bug).
+
+    The watcher is a concurrent process (not thread) that
+    waits for a signal and the process that contains the
+    threads.  See Appendix A of The Little Book of Semaphores.
+    http://greenteapress.com/semaphores/
+
+    I have only tested this on Linux.  I would expect it to
+    work on the Macintosh and not work on Windows.
+    """
+
+    def __init__(self):
+        """ Creates a child thread, which returns.  The parent
+            thread waits for a KeyboardInterrupt and then kills
+            the child thread.
+        """
+        self.child = os.fork()
+        if self.child == 0:
+            return
+        else:
+            self.watch()
+
+    def watch(self):
+        try:
+            os.wait()
+        except KeyboardInterrupt:
+            # I put the capital B in KeyBoardInterrupt so I can
+            # tell when the Watcher gets the SIGINT
+            print '\033[0m' + 'KeyBoardInterrupt'
+            self.kill()
+        sys.exit()
+
+    def kill(self):
+        try:
+            os.kill(self.child, signal.SIGKILL)
+        except OSError: pass
+
+class LogAggregator(object):
+    def __init__(self, file_names):
+        n = len(file_names)
+        self.entries = []
+        self.open_files = set(range(n))
+
+    def add(self, entry):
+        heapq.heappush(self.entries, entry)
+        #if 
+        #print self.entries[-10:]
+        #print entry.fid, entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
+
+    def eof(self, fid):
+        self.open_files.remove(fid)
+
+    def get(self):
+        while self.open_files or self.entries:
+            try:
+                entry = heapq.heappop(self.entries)
+                yield entry
+            except IndexError:
+                time.sleep(0.5)
+                pass
+
+class OutputThread(Thread):
+    def __init__(self, aggregator, fd=sys.stdout, collapse=False, truncate=0):
+        Thread.__init__(self, name='OutputThread')
+        self.aggregator = aggregator
+        self.fd = fd
+        self.collapse = collapse
+        self.truncate = truncate
+    def run(self):
+        fd = self.fd
+        collapse = self.collapse
+        trunc = self.truncate
+        for entry in self.aggregator.get():
+            fd.write(str(entry.fid) + ' ')
+            fd.write('\033[97m')
+            fd.write(entry.ts + ' ')
+            if entry.level == LogLevel.FATAL:
+                fd.write('\033[95m')
+            elif entry.level == LogLevel.ERROR:
+                fd.write('\033[91m')
+            elif entry.level == LogLevel.WARN:
+                fd.write('\033[93m')
+            elif entry.level == LogLevel.INFO:
+                fd.write('\033[92m')
+            else:
+                fd.write('\033[94m')
+            fd.write(str(entry.level))
+            fd.write('\033[0m')
+            msg = entry.message
+            if collapse:
+                msg = msg.replace('\n', '\\n')
+            if trunc and len(msg) > trunc:
+                msg = msg[:trunc].rsplit(' ', 1)[0] + '...'
+            fd.write(' ' + (entry.thread or '-'))
+            fd.write(' ' + entry.source_class)
+            fd.write(' ' + entry.source_location)
+            if entry.level == LogLevel.FATAL:
+                fd.write('\033[95m')
+            elif entry.level == LogLevel.ERROR:
+                fd.write('\033[91m')
+            elif entry.level == LogLevel.WARN:
+                fd.write('\033[93m')
+            elif entry.level == LogLevel.INFO:
+                fd.write('\033[92m')
+            else:
+                fd.write('\033[94m')
+            fd.write(' ' + msg)
+            fd.write('\033[0m ')
+            fd.write('\n')
+
+class LogFilter(object):
+    def __init__(self):
+        self.levels = set()
+        self.grep = None
+        self.time_from = None
+        self.time_to = None
+
+    def matches(self, entry):
+        ok = not self.levels or entry.level in self.levels
+        if ok and self.grep:
+            ok = self.grep in entry.message or self.grep in entry.source_class
+        if ok and self.time_from:
+            ok = entry.ts >= self.time_from
+        if ok and self.time_to:
+            ok = entry.ts < self.time_to
+
+        return ok
+
+def main():
+    Watcher()
+    parser = OptionParser()
+    parser.add_option('-f', '--follow', action='store_true', dest='follow',
+                      help='keep file open reading new lines (like tail)')
+    parser.add_option('-t', '--tail', dest='tail', action='store_true',
+                      help='show last N lines (default 10)')
+    parser.add_option('-n', '--lines', dest='tail_lines', default=10, type='int', metavar='N',
+                      help='show last N lines (instead of default 10)')
+    parser.add_option('-c', '--collapse', dest='collapse', action='store_true',
+                      help='collapse multi-line entries (i.e. each log entry is a single line)')
+    parser.add_option('--truncate', dest='truncate', metavar='CHARS', type='int',
+                      help='truncate log message to CHARS characters')
+    parser.add_option('-l', '--levels', dest='levels',
+                      help='only show log entries with log level(s)')
+    parser.add_option('-g', '--grep', dest='grep', metavar='PATTERN',
+                      help='only show log entries matching pattern')
+    parser.add_option('--time-from', dest='time_from', metavar='DATETIME',
+                      help='only show log entries starting at DATETIME')
+    parser.add_option('--time-to', dest='time_to', metavar='DATETIME',
+                      help='only show log entries until DATETIME')
+
+    (options, args) = parser.parse_args()
+
+    filterdef = LogFilter()
+    filterdef.grep = options.grep
+    filterdef.time_from = options.time_from
+    filterdef.time_to = options.time_to
+
+    if options.levels:
+        for lvl in options.levels.split(','):
+            lo = getattr(LogLevel, lvl)
+            filterdef.levels.add(lo)
+
+    tail_lines = 0
+    if options.tail:
+        tail_lines = int(options.tail_lines)
+
+    file_names = args
+    aggregator = LogAggregator(file_names)
+    readers = []
+    fid = 0
+    for fname in file_names:
+        parser = Log4jParser()
+        readers.append(LogReader(fid, fname, parser, aggregator, tail=tail_lines, follow=options.follow, filterdef=filterdef))
+        fid += 1
+    for reader in readers:
+        reader.start()
+    out = OutputThread(aggregator, collapse=options.collapse, truncate=options.truncate)
+    out.start()
+
+
+if __name__ == '__main__':
+    main()
+
