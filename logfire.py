@@ -95,6 +95,14 @@ class Log4jParser(object):
                 lastline = None
             yield LogEntry(fid=fid, ts=ts, i=i, level=level, thread=thread, source_class=source_class, source_location=source_location.rstrip(')'), message=msg.rstrip())
             i += 1
+
+def parse_timestamp(ts):
+    """takes a timestamp such as 2011-09-18 16:00:01,123"""
+    if len(ts) < 19:
+        ts += ':00'
+    struct = time.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
+    return time.mktime(struct)
+    
     
 class LogReader(Thread):
     def __init__(self, fid, fname, parser, receiver, tail=0, follow=False, filterdef=None):
@@ -122,6 +130,41 @@ class LogReader(Thread):
                     fd.seek(s + e, 2)
                     break
 
+    def _seek_time(self, fd, ts):
+        """try to seek to our start time"""
+        s = os.path.getsize(self.fname) 
+        fd.seek(0)
+
+        if s < 8192:
+            # file is too small => we do not need to seek around
+            return
+
+        file_start = None
+        for entry in self.parser.read(0, fd):
+            file_start = entry.ts
+            break
+
+        fd.seek(-1024, 2)
+        file_end = None
+        for entry in self.parser.read(0, fd):
+            file_end = entry.ts
+            break
+
+        if not file_start or not file_end:
+            fd.seek(0)
+            return
+
+        start = parse_timestamp(file_start)
+        t = parse_timestamp(ts)
+        end = parse_timestamp(file_end)
+
+        if end - start <= 0:
+            fd.seek(0)
+            return
+        
+        ratio = max(0, (t - start) / (end - start) - 0.2)
+        fd.seek(s * ratio)
+
     def run(self):
         fid = self.fid
         receiver = self.receiver
@@ -130,6 +173,8 @@ class LogReader(Thread):
             self.parser.auto_configure(fd)
             if self.tail:
                 self._seek_tail(fd, self.tail)
+            elif filt.time_from:
+                self._seek_time(fd, filt.time_from)
             while True:
                 where = fd.tell()
                 had_entry = False
