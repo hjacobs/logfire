@@ -326,7 +326,7 @@ class LogFilter(object):
 
 def main():
     Watcher()
-    parser = OptionParser()
+    parser = OptionParser(usage='Usage: %prog [OPTION]... [FILE]...')
     parser.add_option('-f', '--follow', action='store_true', dest='follow',
                       help='keep file open reading new lines (like tail)')
     parser.add_option('-t', '--tail', dest='tail', action='store_true',
