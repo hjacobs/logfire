@@ -7,7 +7,6 @@ import os
 import signal
 import sys
 import time
-from operator import itemgetter
 from threading import Thread
 from optparse import OptionParser
 
@@ -361,6 +360,8 @@ class LogFilter(object):
 def main():
     Watcher()
     parser = OptionParser(usage='Usage: %prog [OPTION]... [FILE]...')
+    parser.add_option('-p', '--profile', 
+                      help='use custom configuration profile (more than one profile allowed)')
     parser.add_option('-f', '--follow', action='store_true', dest='follow',
                       help='keep file open reading new lines (like tail)')
     parser.add_option('-t', '--tail', dest='tail', action='store_true',
@@ -383,14 +384,27 @@ def main():
     (options, args) = parser.parse_args()
 
     config_file = os.path.expanduser('~/.logfirerc')
+    if not os.path.isfile(config_file):
+        # fallback using global configuration file
+        config_file = '/etc/logfirerc'
     if os.path.isfile(config_file):
         config = json.load(open(config_file, 'rb'))
-        if config.get('default'):
-            for key, val in config['default'].get('options', {}).items():
-                if not getattr(options, key, None):
-                    setattr(options, key, val)
-            if not args:
-                args = config['default'].get('files', [])
+        merged_config = {'options': {}, 'files': []}
+        active_profiles = ['default']
+        if options.profile:
+            active_profiles += options.profile.split(',')
+        for profile in active_profiles:
+            if config.get(profile):
+                merged_config['options'].update(config[profile].get('options', {}))
+                if config[profile].get('files'):
+                    merged_config['files'] += config[profile].get('files')
+
+        for key, val in merged_config['options'].items():
+            if not getattr(options, key, None):
+                setattr(options, key, val)
+        if not args:
+            args = merged_config['files']
+            
 
     filterdef = LogFilter()
     filterdef.grep = options.grep
