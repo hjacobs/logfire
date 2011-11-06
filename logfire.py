@@ -387,8 +387,10 @@ def main():
         config = json.load(open(config_file, 'rb'))
         if config.get('default'):
             for key, val in config['default'].get('options', {}).items():
-                setattr(options, key, val)
-            args += config['default'].get('files', [])
+                if not getattr(options, key, None):
+                    setattr(options, key, val)
+            if not args:
+                args = config['default'].get('files', [])
 
     filterdef = LogFilter()
     filterdef.grep = options.grep
