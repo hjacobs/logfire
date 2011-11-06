@@ -2,6 +2,7 @@
 
 import collections
 import heapq
+import json
 import os
 import signal
 import sys
@@ -28,15 +29,18 @@ LogLevel.WARN = LogLevel(3, 'WARN')
 LogLevel.ERROR = LogLevel(4, 'ERROR')
 LogLevel.FATAL = LogLevel(5, 'FATAL')
 
-LogEntry = collections.namedtuple('LogEntry', 'ts fid i level thread source_class source_location message')
+LogEntry = collections.namedtuple('LogEntry', 'ts fid i flowid level thread source_class source_location message')
 
 class Log4jParser(object):
     def __init__(self):
-        # default log4j pattern: %d [%p] %t: %l - %m%n
-        self.columns = 4
-        self.col_thread = 1
-        self.col_location = 2
-        self.col_message = 3
+        # default pattern: %d %x %p %t %l: %m%n
+        self.delimiter = ' '
+        self.columns = 5
+        self.col_flowid = 0
+        self.col_level = 1
+        self.col_thread = 2
+        self.col_location = 3
+        self.col_message = 4
 
     def auto_configure(self, fd):
         """try to auto-configure the parser"""
@@ -44,8 +48,24 @@ class Log4jParser(object):
             for entry in self.read(0, fd):
                 break
         except ValueError:
+            # log4j pattern with thread name: %d [%p] %t: %l - %m%n
+            self.delimiter = None
+            self.columns = 4
+            self.col_flowid = None
+            self.col_level = 0
+            self.col_thread = 1
+            self.col_location = 2
+            self.col_message = 3
+        fd.seek(0)
+
+        try:
+            for entry in self.read(0, fd):
+                break
+        except ValueError:
             # log4j pattern without thread name: %d [%p] %l - %m%n
             self.columns = 3
+            self.col_flowid = None
+            self.col_level = 0
             self.col_thread = None
             self.col_location = 1
             self.col_message = 2
@@ -54,6 +74,9 @@ class Log4jParser(object):
     def read(self, fid, fd):
         """read log4j formatted log file"""
         maxsplit = self.columns - 1
+        delimiter = self.delimiter
+        col_flowid = self.col_flowid
+        col_level = self.col_level
         col_thread = self.col_thread
         col_location = self.col_location
         col_message = self.col_message
@@ -67,8 +90,8 @@ class Log4jParser(object):
             ts = line[:23]
             if ts[:2] != '20':
                 continue
-            cols = line[24:].split(None, maxsplit)
-            c = cols[0][1]
+            cols = line[24:].split(delimiter, maxsplit)
+            c = cols[col_level].strip('[]')[0]
             if c == 'T':
                 level = LogLevel.TRACE
             elif c == 'D':
@@ -81,19 +104,20 @@ class Log4jParser(object):
                 level = LogLevel.ERROR
             else:
                 level = LogLevel.FATAL
-            thread = col_thread and cols[col_thread][:-1] or None
+            flowid = col_flowid is not None and cols[col_flowid] or None
+            thread = col_thread is not None and cols[col_thread].rstrip(':') or None
             source_class, source_location = cols[col_location].split('(', 1)
-            msg = cols[col_message][2:]
+            msg = cols[col_message]
             while True:
                 lastline = fd.readline()
                 if not lastline:
                     break
-                if lastline[:2] == '20' and lastline[23:25] == ' [':
+                if lastline[:2] == '20' and lastline[23:24] == ' ':
                     # start of new log entry
                     break
                 msg += lastline
                 lastline = None
-            yield LogEntry(fid=fid, ts=ts, i=i, level=level, thread=thread, source_class=source_class, source_location=source_location.rstrip(')'), message=msg.rstrip())
+            yield LogEntry(fid=fid, ts=ts, i=i, flowid=flowid, level=level, thread=thread, source_class=source_class, source_location=source_location.rstrip(':)'), message=msg.rstrip())
             i += 1
 
 def parse_timestamp(ts):
@@ -117,7 +141,13 @@ class LogReader(Thread):
 
     def _seek_tail(self, fd, n):
         """seek to start of "tail" (last n lines)"""
+        l = os.path.getsize(self.fname) 
         s = -1024 * n
+        if s * -1 >= l:
+            # apparently the file is too small
+            # => seek to start of file
+            fd.seek(0)
+            return
         fd.seek(s, 2)
         contents = fd.read()
         e = len(contents)
@@ -235,6 +265,7 @@ class Watcher:
 
 class LogAggregator(object):
     def __init__(self, file_names):
+        self.file_names = file_names
         n = len(file_names)
         self.entries = []
         self.open_files = set(range(n))
@@ -268,10 +299,12 @@ class OutputThread(Thread):
         fd = self.fd
         collapse = self.collapse
         trunc = self.truncate
+        file_names = self.aggregator.file_names
         for entry in self.aggregator.get():
-            fd.write(str(entry.fid) + ' ')
+            fd.write(file_names[entry.fid] + ' ')
             fd.write('\033[97m')
-            fd.write(entry.ts + ' ')
+            # do not print year:
+            fd.write(entry.ts[5:] + ' ')
             if entry.level == LogLevel.FATAL:
                 fd.write('\033[95m')
             elif entry.level == LogLevel.ERROR:
@@ -289,6 +322,7 @@ class OutputThread(Thread):
                 msg = msg.replace('\n', '\\n')
             if trunc and len(msg) > trunc:
                 msg = msg[:trunc].rsplit(' ', 1)[0] + '...'
+            fd.write(' ' + (entry.flowid if entry.flowid else '-'))
             fd.write(' ' + (entry.thread or '-'))
             fd.write(' ' + entry.source_class)
             fd.write(' ' + entry.source_location)
@@ -330,9 +364,9 @@ def main():
     parser.add_option('-f', '--follow', action='store_true', dest='follow',
                       help='keep file open reading new lines (like tail)')
     parser.add_option('-t', '--tail', dest='tail', action='store_true',
-                      help='show last N lines (default 10)')
-    parser.add_option('-n', '--lines', dest='tail_lines', default=10, type='int', metavar='N',
-                      help='show last N lines (instead of default 10)')
+                      help='show last N lines (default 100)')
+    parser.add_option('-n', '--lines', dest='tail_lines', default=100, type='int', metavar='N',
+                      help='show last N lines (instead of default 100)')
     parser.add_option('-c', '--collapse', dest='collapse', action='store_true',
                       help='collapse multi-line entries (i.e. each log entry is a single line)')
     parser.add_option('--truncate', dest='truncate', metavar='CHARS', type='int',
@@ -348,6 +382,14 @@ def main():
 
     (options, args) = parser.parse_args()
 
+    config_file = os.path.expanduser('~/.logfirerc')
+    if os.path.isfile(config_file):
+        config = json.load(open(config_file, 'rb'))
+        if config.get('default'):
+            for key, val in config['default'].get('options', {}).items():
+                setattr(options, key, val)
+            args += config['default'].get('files', [])
+
     filterdef = LogFilter()
     filterdef.grep = options.grep
     filterdef.time_from = options.time_from
@@ -362,13 +404,26 @@ def main():
     if options.tail:
         tail_lines = int(options.tail_lines)
 
+    used_file_names = set()
     file_names = args
     aggregator = LogAggregator(file_names)
     readers = []
     fid = 0
-    for fname in file_names:
+    for fname_with_name in file_names:
+        if ':' in fname_with_name:
+            name, unused, fpath = fname_with_name.partition(':')
+        else:
+            fpath = fname_with_name
+            name, ext = os.path.splitext(os.path.basename(fpath))
+            name = name[-4:].upper()
+        i = 1
+        while name in used_file_names:
+            name = name + str(i)
+            i += 1
+        file_names[fid] = name 
+        used_file_names.add(name)
         parser = Log4jParser()
-        readers.append(LogReader(fid, fname, parser, aggregator, tail=tail_lines, follow=options.follow, filterdef=filterdef))
+        readers.append(LogReader(fid, fpath, parser, aggregator, tail=tail_lines, follow=options.follow, filterdef=filterdef))
         fid += 1
     for reader in readers:
         reader.start()
