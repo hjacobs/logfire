@@ -125,8 +125,8 @@ def parse_timestamp(ts):
         ts += ':00'
     struct = time.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
     return time.mktime(struct)
-    
-    
+
+
 class LogReader(Thread):
     def __init__(self, fid, fname, parser, receiver, tail=0, follow=False, filterdef=None):
         Thread.__init__(self, name='LogReader-%d' % (fid,))
@@ -140,7 +140,7 @@ class LogReader(Thread):
 
     def _seek_tail(self, fd, n):
         """seek to start of "tail" (last n lines)"""
-        l = os.path.getsize(self.fname) 
+        l = os.path.getsize(self.fname)
         s = -1024 * n
         if s * -1 >= l:
             # apparently the file is too small
@@ -161,7 +161,7 @@ class LogReader(Thread):
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""
-        s = os.path.getsize(self.fname) 
+        s = os.path.getsize(self.fname)
         fd.seek(0)
 
         if s < 8192:
@@ -190,7 +190,7 @@ class LogReader(Thread):
         if end - start <= 0:
             fd.seek(0)
             return
-        
+
         ratio = max(0, (t - start) / (end - start) - 0.2)
         fd.seek(s * ratio)
 
@@ -218,7 +218,7 @@ class LogReader(Thread):
                 if not had_entry:
                     time.sleep(0.5)
                     fd.seek(where)
-                
+
 
 class Watcher:
     """this class solves two problems with multithreaded
@@ -271,7 +271,7 @@ class LogAggregator(object):
 
     def add(self, entry):
         heapq.heappush(self.entries, entry)
-        #if 
+        #if
         #print self.entries[-10:]
         #print entry.fid, entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
 
@@ -286,6 +286,16 @@ class LogAggregator(object):
             except IndexError:
                 time.sleep(0.5)
                 pass
+
+COLORS = [
+    '\033[31m',
+    '\033[32m',
+    '\033[33m',
+    '\033[34m',
+    '\033[35m',
+    '\033[36m',
+    '\033[37m',
+]
 
 class OutputThread(Thread):
     def __init__(self, aggregator, fd=sys.stdout, collapse=False, truncate=0):
@@ -321,7 +331,12 @@ class OutputThread(Thread):
                 msg = msg.replace('\n', '\\n')
             if trunc and len(msg) > trunc:
                 msg = msg[:trunc].rsplit(' ', 1)[0] + '...'
-            fd.write(' ' + (entry.flowid if entry.flowid else '-'))
+            if entry.flowid:
+                fd.write(COLORS[hash(entry.flowid) % 7])
+                fd.write(' ' + entry.flowid[:2] + '-' + entry.flowid[-2:])
+                fd.write('\033[0m')
+            else:
+                fd.write('   -  ')
             fd.write(' ' + (entry.thread or '-'))
             fd.write(' ' + entry.source_class)
             fd.write(' ' + entry.source_location)
@@ -360,7 +375,7 @@ class LogFilter(object):
 def main():
     Watcher()
     parser = OptionParser(usage='Usage: %prog [OPTION]... [FILE]...')
-    parser.add_option('-p', '--profile', 
+    parser.add_option('-p', '--profile',
                       help='use custom configuration profile (more than one profile allowed)')
     parser.add_option('-f', '--follow', action='store_true', dest='follow',
                       help='keep file open reading new lines (like tail)')
@@ -404,7 +419,7 @@ def main():
                 setattr(options, key, val)
         if not args:
             args = merged_config['files']
-            
+
 
     filterdef = LogFilter()
     filterdef.grep = options.grep
@@ -436,7 +451,7 @@ def main():
         while name in used_file_names:
             name = name + str(i)
             i += 1
-        file_names[fid] = name 
+        file_names[fid] = name
         used_file_names.add(name)
         parser = Log4jParser()
         readers.append(LogReader(fid, fpath, parser, aggregator, tail=tail_lines, follow=options.follow, filterdef=filterdef))
