@@ -1,16 +1,21 @@
-#!/usr/bin/python
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import collections
 import heapq
 import json
+import logging
 import os
 import signal
 import sys
 import time
+import traceback
 from threading import Thread
-from optparse import OptionParser
+from argparse import ArgumentParser
+
 
 class LogLevel(object):
+
     def __init__(self, priority, name):
         self.priority = priority
         self.name = name
@@ -21,6 +26,7 @@ class LogLevel(object):
     def __repr__(self):
         return self.name
 
+
 LogLevel.TRACE = LogLevel(0, 'TRACE')
 LogLevel.DEBUG = LogLevel(1, 'DEBUG')
 LogLevel.INFO = LogLevel(2, 'INFO')
@@ -28,9 +34,22 @@ LogLevel.WARN = LogLevel(3, 'WARN')
 LogLevel.ERROR = LogLevel(4, 'ERROR')
 LogLevel.FATAL = LogLevel(5, 'FATAL')
 
-LogEntry = collections.namedtuple('LogEntry', 'ts fid i flowid level thread source_class source_location message')
 
-class Log4jParser(object):
+class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread source_class source_location message')):
+
+    def as_logstash(self):
+        d = self._asdict()
+        d['@timestamp'] = self.ts
+        d['level'] = str(self.level)
+        d['type'] = 'log4j'
+        del d['fid']
+        del d['i']
+        del d['ts']
+        return d
+
+
+class Log4Jparser(object):
+
     def __init__(self):
         # default pattern: %d %x %p %t %l: %m%n
         self.delimiter = ' '
@@ -43,6 +62,7 @@ class Log4jParser(object):
 
     def auto_configure(self, fd):
         """try to auto-configure the parser"""
+
         try:
             for entry in self.read(0, fd):
                 break
@@ -72,6 +92,7 @@ class Log4jParser(object):
 
     def read(self, fid, fd):
         """read log4j formatted log file"""
+
         maxsplit = self.columns - 1
         delimiter = self.delimiter
         col_flowid = self.col_flowid
@@ -86,41 +107,57 @@ class Log4jParser(object):
             line = lastline or fd.readline()
             if not line:
                 break
-            ts = line[:23]
-            if ts[:2] != '20':
-                continue
-            cols = line[24:].split(delimiter, maxsplit)
-            c = cols[col_level].strip('[]')[0]
-            if c == 'T':
-                level = LogLevel.TRACE
-            elif c == 'D':
-                level = LogLevel.DEBUG
-            elif c == 'I':
-                level = LogLevel.INFO
-            elif c == 'W':
-                level = LogLevel.WARN
-            elif c == 'E':
-                level = LogLevel.ERROR
+            try:
+                ts = line[:23]
+                if ts[:2] != '20':
+                    continue
+                cols = line[24:].split(delimiter, maxsplit)
+                c = cols[col_level].strip('[]')[0]
+                if c == 'T':
+                    level = LogLevel.TRACE
+                elif c == 'D':
+                    level = LogLevel.DEBUG
+                elif c == 'I':
+                    level = LogLevel.INFO
+                elif c == 'W':
+                    level = LogLevel.WARN
+                elif c == 'E':
+                    level = LogLevel.ERROR
+                else:
+                    level = LogLevel.FATAL
+                flowid = col_flowid is not None and cols[col_flowid] or None
+                thread = col_thread is not None and cols[col_thread].rstrip(':') or None
+                source_class, source_location = cols[col_location].split('(', 1)
+                msg = cols[col_message]
+                while True:
+                    lastline = fd.readline()
+                    if not lastline:
+                        break
+                    if lastline[:2] == '20' and lastline[23:24] == ' ':
+                        # start of new log entry
+                        break
+                    msg += lastline
+                    lastline = None
+            except:
+                logging.exception('Failed to parse line "%s"', line)
             else:
-                level = LogLevel.FATAL
-            flowid = col_flowid is not None and cols[col_flowid] or None
-            thread = col_thread is not None and cols[col_thread].rstrip(':') or None
-            source_class, source_location = cols[col_location].split('(', 1)
-            msg = cols[col_message]
-            while True:
-                lastline = fd.readline()
-                if not lastline:
-                    break
-                if lastline[:2] == '20' and lastline[23:24] == ' ':
-                    # start of new log entry
-                    break
-                msg += lastline
-                lastline = None
-            yield LogEntry(fid=fid, ts=ts, i=i, flowid=flowid, level=level, thread=thread, source_class=source_class, source_location=source_location.rstrip(':)'), message=msg.rstrip())
+                yield LogEntry(
+                    fid=fid,
+                    ts=ts,
+                    i=i,
+                    flowid=flowid,
+                    level=level,
+                    thread=thread,
+                    source_class=source_class,
+                    source_location=source_location.rstrip(':)'),
+                    message=msg.rstrip(),
+                )
             i += 1
+
 
 def parse_timestamp(ts):
     """takes a timestamp such as 2011-09-18 16:00:01,123"""
+
     if len(ts) < 19:
         ts += ':00'
     struct = time.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
@@ -128,8 +165,19 @@ def parse_timestamp(ts):
 
 
 class LogReader(Thread):
-    def __init__(self, fid, fname, parser, receiver, tail=0, follow=False, filterdef=None):
-        Thread.__init__(self, name='LogReader-%d' % (fid,))
+
+    def __init__(
+        self,
+        fid,
+        fname,
+        parser,
+        receiver,
+        tail=0,
+        follow=False,
+        filterdef=None,
+    ):
+
+        Thread.__init__(self, name='LogReader-%d' % (fid, ))
         self.fid = fid
         self.fname = fname
         self.parser = parser
@@ -140,6 +188,7 @@ class LogReader(Thread):
 
     def _seek_tail(self, fd, n):
         """seek to start of "tail" (last n lines)"""
+
         l = os.path.getsize(self.fname)
         s = -1024 * n
         if s * -1 >= l:
@@ -161,6 +210,7 @@ class LogReader(Thread):
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""
+
         s = os.path.getsize(self.fname)
         fd.seek(0)
 
@@ -210,17 +260,18 @@ class LogReader(Thread):
                 for entry in self.parser.read(fid, fd):
                     if filt.matches(entry):
                         receiver.add(entry)
-                    #print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
+                    # print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
                     had_entry = True
                 if not self.follow:
                     receiver.eof(fid)
                     break
                 if not had_entry:
-                    time.sleep(0.5)
+                    time.sleep(0.1)
                     fd.seek(where)
 
 
 class Watcher:
+
     """this class solves two problems with multithreaded
     programs in Python, (1) a signal might be delivered
     to any thread (which is just a malfeature) and (2) if
@@ -241,6 +292,7 @@ class Watcher:
             thread waits for a KeyboardInterrupt and then kills
             the child thread.
         """
+
         self.child = os.fork()
         if self.child == 0:
             return
@@ -260,20 +312,25 @@ class Watcher:
     def kill(self):
         try:
             os.kill(self.child, signal.SIGKILL)
-        except OSError: pass
+        except OSError:
+            pass
+
 
 class LogAggregator(object):
-    def __init__(self, file_names):
+
+    def __init__(self, file_names, sleep=0.5):
         self.file_names = file_names
         n = len(file_names)
         self.entries = []
         self.open_files = set(range(n))
+        self._sleep = sleep
 
     def add(self, entry):
         heapq.heappush(self.entries, entry)
-        #if
-        #print self.entries[-10:]
-        #print entry.fid, entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
+
+        # if
+        # print self.entries[-10:]
+        # print entry.fid, entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
 
     def eof(self, fid):
         self.open_files.remove(fid)
@@ -284,8 +341,38 @@ class LogAggregator(object):
                 entry = heapq.heappop(self.entries)
                 yield entry
             except IndexError:
-                time.sleep(0.5)
+                if self._sleep:
+                    logging.debug('Sleeping %ss..', self._sleep)
+                    time.sleep(self._sleep)
                 pass
+
+
+class NonOrderedLogAggregator(object):
+
+    def __init__(self, file_names, sleep=0.5):
+        self.file_names = file_names
+        n = len(file_names)
+        self.entries = collections.deque()
+        self.open_files = set(range(n))
+        self._sleep = sleep
+
+    def add(self, entry):
+        self.entries.appendleft(entry)
+
+    def eof(self, fid):
+        self.open_files.remove(fid)
+
+    def get(self):
+        while self.open_files or self.entries:
+            try:
+                entry = self.entries.pop()
+                yield entry
+            except IndexError:
+                if self._sleep:
+                    logging.debug('Sleeping %ss..', self._sleep)
+                    time.sleep(self._sleep)
+                pass
+
 
 COLORS = [
     '\033[31m',
@@ -297,13 +384,71 @@ COLORS = [
     '\033[37m',
 ]
 
+
+class RedisOutputThread(Thread):
+
+    def __init__(self, aggregator, host, port, namespace):
+        Thread.__init__(self, name='RedisOutputThread')
+        self.aggregator = aggregator
+        self._redis_namespace = namespace
+        import redis
+        self._redis = redis.StrictRedis(host, port, socket_timeout=10)
+        self._connect()
+
+    def _connect(self):
+        wait = -1
+        while True:
+            wait += 1
+            time.sleep(wait)
+            if wait == 20:
+                return False
+
+            if wait > 0:
+                logging.info('Retrying connection, attempt {0}'.format(wait + 1))
+
+            try:
+                self._redis.ping()
+                break
+            except UserWarning:
+                traceback.print_exc()
+            except Exception:
+                traceback.print_exc()
+
+        self._pipeline = self._redis.pipeline(transaction=False)
+
+    def run(self):
+        file_names = self.aggregator.file_names
+
+        total = 0
+        start = time.time()
+        while True:
+            i = 0
+            for entry in self.aggregator.get():
+                d = entry.as_logstash()
+                d['logfile'] = file_names[entry.fid]
+                self._pipeline.rpush(self._redis_namespace, json.dumps(d))
+                i += 1
+                if i > 10:
+                    total += i
+                    if total % 100 == 0:
+                        now = time.time()
+                        logging.debug('Pushed %s entries (%s/s)', total, total / (now - start))
+                    break
+            try:
+                self._pipeline.execute()
+            except:
+                logging.exception('Redis connection failure')
+
+
 class OutputThread(Thread):
+
     def __init__(self, aggregator, fd=sys.stdout, collapse=False, truncate=0):
         Thread.__init__(self, name='OutputThread')
         self.aggregator = aggregator
         self.fd = fd
         self.collapse = collapse
         self.truncate = truncate
+
     def run(self):
         fd = self.fd
         collapse = self.collapse
@@ -354,7 +499,9 @@ class OutputThread(Thread):
             fd.write('\033[0m ')
             fd.write('\n')
 
+
 class LogFilter(object):
+
     def __init__(self):
         self.levels = set()
         self.grep = None
@@ -372,31 +519,33 @@ class LogFilter(object):
 
         return ok
 
+
 def main():
     Watcher()
-    parser = OptionParser(usage='Usage: %prog [OPTION]... [FILE]...')
-    parser.add_option('-p', '--profile',
-                      help='use custom configuration profile (more than one profile allowed)')
-    parser.add_option('-f', '--follow', action='store_true', dest='follow',
-                      help='keep file open reading new lines (like tail)')
-    parser.add_option('-t', '--tail', dest='tail', action='store_true',
-                      help='show last N lines (default 100)')
-    parser.add_option('-n', '--lines', dest='tail_lines', default=100, type='int', metavar='N',
-                      help='show last N lines (instead of default 100)')
-    parser.add_option('-c', '--collapse', dest='collapse', action='store_true',
-                      help='collapse multi-line entries (i.e. each log entry is a single line)')
-    parser.add_option('--truncate', dest='truncate', metavar='CHARS', type='int',
-                      help='truncate log message to CHARS characters')
-    parser.add_option('-l', '--levels', dest='levels',
-                      help='only show log entries with log level(s)')
-    parser.add_option('-g', '--grep', dest='grep', metavar='PATTERN',
-                      help='only show log entries matching pattern')
-    parser.add_option('--time-from', dest='time_from', metavar='DATETIME',
-                      help='only show log entries starting at DATETIME')
-    parser.add_option('--time-to', dest='time_to', metavar='DATETIME',
-                      help='only show log entries until DATETIME')
+    parser = ArgumentParser()
+    parser.add_argument('files', nargs='+', help='use custom configuration profile (more than one profile allowed)')
+    parser.add_argument('-p', '--profile', help='use custom configuration profile (more than one profile allowed)')
+    parser.add_argument('-f', '--follow', action='store_true', help='keep file open reading new lines (like tail)')
+    parser.add_argument('-t', '--tail', action='store_true', help='show last N lines (default 100)')
+    parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose mode')
+    parser.add_argument('-n', '--lines', dest='tail_lines', default=100, type=int, metavar='N',
+                        help='show last N lines (instead of default 100)')
+    parser.add_argument('-c', '--collapse', action='store_true',
+                        help='collapse multi-line entries (i.e. each log entry is a single line)')
+    parser.add_argument('--truncate', metavar='CHARS', type=int, help='truncate log message to CHARS characters')
+    parser.add_argument('-l', '--levels', help='only show log entries with log level(s)')
+    parser.add_argument('-g', '--grep', metavar='PATTERN', help='only show log entries matching pattern')
+    parser.add_argument('--time-from', metavar='DATETIME', help='only show log entries starting at DATETIME')
+    parser.add_argument('--time-to', metavar='DATETIME', help='only show log entries until DATETIME')
+    parser.add_argument('--redis-host', help='redis host')
+    parser.add_argument('--redis-port', type=int, default=6379, help='redis port')
+    parser.add_argument('--redis-namespace', help='redis namespace')
 
-    (options, args) = parser.parse_args()
+    args = parser.parse_args()
+
+    logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO))
+
+    file_names = args.files
 
     config_file = os.path.expanduser('~/.logfirerc')
     if not os.path.isfile(config_file):
@@ -406,8 +555,8 @@ def main():
         config = json.load(open(config_file, 'rb'))
         merged_config = {'options': {}, 'files': []}
         active_profiles = ['default']
-        if options.profile:
-            active_profiles += options.profile.split(',')
+        if args.profile:
+            active_profiles += args.profile.split(',')
         for profile in active_profiles:
             if config.get(profile):
                 merged_config['options'].update(config[profile].get('options', {}))
@@ -415,29 +564,30 @@ def main():
                     merged_config['files'] += config[profile].get('files')
 
         for key, val in merged_config['options'].items():
-            if not getattr(options, key, None):
-                setattr(options, key, val)
-        if not args:
-            args = merged_config['files']
-
+            if not getattr(args, key, None):
+                setattr(args, key, val)
+        if not args.files:
+            file_names = merged_config['files']
 
     filterdef = LogFilter()
-    filterdef.grep = options.grep
-    filterdef.time_from = options.time_from
-    filterdef.time_to = options.time_to
+    filterdef.grep = args.grep
+    filterdef.time_from = args.time_from
+    filterdef.time_to = args.time_to
 
-    if options.levels:
-        for lvl in options.levels.split(','):
+    if args.levels:
+        for lvl in args.levels.split(','):
             lo = getattr(LogLevel, lvl)
             filterdef.levels.add(lo)
 
     tail_lines = 0
-    if options.tail:
-        tail_lines = int(options.tail_lines)
+    if args.tail:
+        tail_lines = int(args.tail_lines)
 
     used_file_names = set()
-    file_names = args
-    aggregator = LogAggregator(file_names)
+    if args.redis_host:
+        aggregator = NonOrderedLogAggregator(file_names)
+    else:
+        aggregator = LogAggregator(file_names)
     readers = []
     fid = 0
     for fname_with_name in file_names:
@@ -451,14 +601,19 @@ def main():
         while name in used_file_names:
             name = name + str(i)
             i += 1
-        file_names[fid] = name
+        if not args.redis_host:
+            file_names[fid] = name
         used_file_names.add(name)
-        parser = Log4jParser()
-        readers.append(LogReader(fid, fpath, parser, aggregator, tail=tail_lines, follow=options.follow, filterdef=filterdef))
+        parser = Log4Jparser()
+        readers.append(LogReader(fid, fpath, parser, aggregator, tail=tail_lines, follow=args.follow,
+                       filterdef=filterdef))
         fid += 1
     for reader in readers:
         reader.start()
-    out = OutputThread(aggregator, collapse=options.collapse, truncate=options.truncate)
+    if args.redis_host:
+        out = RedisOutputThread(aggregator, args.redis_host, args.redis_port, args.redis_namespace)
+    else:
+        out = OutputThread(aggregator, collapse=args.collapse, truncate=args.truncate)
     out.start()
 
 
