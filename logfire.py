@@ -2,7 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import collections
+import errno
+import gzip
+import hashlib
 import heapq
+import io
 import json
 import logging
 import os
@@ -12,6 +16,8 @@ import time
 import traceback
 from threading import Thread
 from argparse import ArgumentParser
+
+LOG_FORMAT = '%(asctime)s %(levelname)s: %(message)s'
 
 
 class LogLevel(object):
@@ -35,13 +41,14 @@ LogLevel.ERROR = LogLevel(4, 'ERROR')
 LogLevel.FATAL = LogLevel(5, 'FATAL')
 
 
-class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread source_class source_location message')):
+class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread clazz method file line message')):
 
     def as_logstash(self):
         d = self._asdict()
         d['@timestamp'] = self.ts
         d['level'] = str(self.level)
-        d['type'] = 'log4j'
+        d['class'] = self.clazz
+        del d['clazz']
         del d['fid']
         del d['i']
         del d['ts']
@@ -112,6 +119,8 @@ class Log4Jparser(object):
                 if ts[:2] != '20':
                     continue
                 cols = line[24:].split(delimiter, maxsplit)
+                if len(cols) < self.columns:
+                    continue
                 c = cols[col_level].strip('[]')[0]
                 if c == 'T':
                     level = LogLevel.TRACE
@@ -128,6 +137,10 @@ class Log4Jparser(object):
                 flowid = col_flowid is not None and cols[col_flowid] or None
                 thread = col_thread is not None and cols[col_thread].rstrip(':') or None
                 source_class, source_location = cols[col_location].split('(', 1)
+                pos = source_class.rindex('.')
+                clazz, method = source_class[:pos], source_class[pos + 1:]
+                _file, line = source_location.split(':', 1)
+                line = int(line.rstrip('):'))
                 msg = cols[col_message]
                 while True:
                     lastline = fd.readline()
@@ -139,7 +152,7 @@ class Log4Jparser(object):
                     msg += lastline
                     lastline = None
             except:
-                logging.exception('Failed to parse line "%s"', line)
+                logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
                 yield LogEntry(
                     fid=fid,
@@ -148,8 +161,10 @@ class Log4Jparser(object):
                     flowid=flowid,
                     level=level,
                     thread=thread,
-                    source_class=source_class,
-                    source_location=source_location.rstrip(':)'),
+                    clazz=clazz,
+                    method=method,
+                    file=_file,
+                    line=line,
                     message=msg.rstrip(),
                 )
             i += 1
@@ -175,29 +190,56 @@ class LogReader(Thread):
         tail=0,
         follow=False,
         filterdef=None,
+        sincedb=None,
     ):
 
         Thread.__init__(self, name='LogReader-%d' % (fid, ))
         self.fid = fid
-        self.fname = fname
+        self._filename = fname
+        self._fhash = hashlib.sha1(fname).hexdigest()
         self.parser = parser
         self.receiver = receiver
         self.tail = tail
         self.follow = follow
         self.filterdef = filterdef or LogFilter()
+        self._last_file_mapping_update = None
+        self._stat_interval = 2
+        self._sincedb_write_interval = 5
+        self._fid = None
+        self._file = None
+        self._first = False
+        self._sincedb_path = sincedb
+        self._last_sincedb_write = None
 
-    def _seek_tail(self, fd, n):
+    def _seek_tail(self):
         """seek to start of "tail" (last n lines)"""
 
-        l = os.path.getsize(self.fname)
+        if self._sincedb_path:
+            last_pos = None
+            try:
+                with open(self._sincedb()) as fd:
+                    fname, fid, last_pos, last_size = fd.read().split()
+                last_pos = int(last_pos)
+                self._fid = fid
+            except:
+                pass
+            if last_pos is not None:
+                logging.debug('Resuming %s at offset %s', self._filename, last_pos)
+                self._file.seek(last_pos)
+                return
+        n = self.tail
+        logging.debug('Seeking to %s tail lines', n)
+        l = os.path.getsize(self._filename)
         s = -1024 * n
         if s * -1 >= l:
             # apparently the file is too small
             # => seek to start of file
-            fd.seek(0)
+            logging.debug('file too small')
+            self._file.seek(0)
             return
-        fd.seek(s, 2)
-        contents = fd.read()
+        self._file.seek(s, 2)
+        t = self._file.tell()
+        contents = self._file.read()
         e = len(contents)
         i = 0
         while e >= 0:
@@ -205,13 +247,13 @@ class LogReader(Thread):
             if e >= 0:
                 i += 1
                 if i >= n:
-                    fd.seek(s + e, 2)
+                    self._file.seek(t + e)
                     break
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""
 
-        s = os.path.getsize(self.fname)
+        s = os.path.getsize(self._filename)
         fd.seek(0)
 
         if s < 8192:
@@ -248,26 +290,126 @@ class LogReader(Thread):
         fid = self.fid
         receiver = self.receiver
         filt = self.filterdef
-        with open(self.fname, 'rb') as fd:
-            self.parser.auto_configure(fd)
-            if self.tail:
-                self._seek_tail(fd, self.tail)
-            elif filt.time_from:
-                self._seek_time(fd, filt.time_from)
-            while True:
-                where = fd.tell()
-                had_entry = False
-                for entry in self.parser.read(fid, fd):
-                    if filt.matches(entry):
-                        receiver.add(entry)
-                    # print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
-                    had_entry = True
-                if not self.follow:
-                    receiver.eof(fid)
-                    break
-                if not had_entry:
-                    time.sleep(0.1)
-                    fd.seek(where)
+        self._update_file()
+        self.parser.auto_configure(self._file)
+        self._update_file()
+        if filt.time_from:
+            self._seek_time(self._file, filt.time_from)
+        while True:
+            where = self._file.tell()
+            had_entry = False
+            for entry in self.parser.read(fid, self._file):
+                if filt.matches(entry):
+                    if self._first:
+                        logging.debug('First entry: %s', entry.ts)
+                        self._first = False
+                    # print entry.ts
+                    receiver.add(entry)
+                # print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
+                self._ensure_file_is_good(time.time())
+                had_entry = True
+            if not self.follow:
+                receiver.eof(fid)
+                break
+            if not had_entry:
+                time.sleep(0.1)
+                if self._ensure_file_is_good(time.time()):
+                    self._file.seek(where)
+
+    def open(self, encoding=None):
+        """Opens the file with the appropriate call"""
+
+        logging.info('Opening %s..', self._filename)
+        try:
+            if self._filename.endswith('.gz'):
+                _file = gzip.open(self._filename, 'rb')
+            else:
+                _file = io.open(self._filename, 'rb')
+        except IOError:
+            logging.exception('Failed to open %s', self._filename)
+            raise
+            # logging.warn(str(e))
+            # _file = None
+            # self.close()
+        self._first = True
+
+        return _file
+
+    @staticmethod
+    def get_file_id(st):
+        return '%xg%x' % (st.st_dev, st.st_ino)
+
+    def _update_file(self, seek_to_end=True):
+        """Open the file for tailing"""
+
+        try:
+            self.close()
+            self._file = self.open()
+        except IOError:
+            raise
+        try:
+            st = os.stat(self._filename)
+        except EnvironmentError, err:
+            if err.errno == errno.ENOENT:
+                logging.info('file removed')
+                self.close()
+        self._fid = self.get_file_id(st)
+        if seek_to_end and self.tail:
+            self._seek_tail()
+
+    def close(self):
+        """Closes all currently open file pointers"""
+
+        self.active = False
+        if self._file:
+            self._file.close()
+
+    def _sincedb(self):
+        return '{}f{}'.format(self._sincedb_path, self._fhash)
+
+    def _ensure_file_is_good(self, current_time):
+        """Every N seconds, ensures that the file we are tailing is the file we expect to be tailing"""
+
+        if self._last_file_mapping_update and current_time - self._last_file_mapping_update <= self._stat_interval:
+            return True
+
+        self._last_file_mapping_update = current_time
+
+        try:
+            st = os.stat(self._filename)
+        except EnvironmentError, err:
+            if err.errno == errno.ENOENT:
+                logging.info('file removed')
+                return
+
+        fid = self.get_file_id(st)
+        cur_pos = self._file.tell()
+        if fid != self._fid:
+            logging.info('file "%s" rotated', self._filename)
+            self._update_file(seek_to_end=False)
+            return False
+        elif cur_pos > st.st_size:
+            if st.st_size == 0 and self._ignore_truncate:
+                logging.info('[{0}] - file size is 0 {1}. '.format(fid, self._filename)
+                             + 'If you use another tool (i.e. logrotate) to truncate '
+                             + 'the file, your application may continue to write to '
+                             + "the offset it last wrote later. In such a case, we'd " + 'better do nothing here')
+                return
+            logging.info('file "%s" truncated', self._filename)
+            self._update_file(seek_to_end=False)
+            return False
+        if self._sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
+                                   > self._sincedb_write_interval):
+            self._last_sincedb_write = current_time
+            path = self._sincedb()
+            logging.debug('Writing sincedb for %s: %s of %s (%s Bytes to go)', self._filename, cur_pos, st.st_size,
+                          st.st_size - cur_pos)
+            try:
+                with open(path, 'wb') as fd:
+                    fd.write(' '.join((self._filename, self._fid, str(cur_pos), str(st.st_size))))
+            except:
+                logging.exception('Failed to write to %s', path)
+        return True
 
 
 class Watcher:
@@ -357,21 +499,21 @@ class NonOrderedLogAggregator(object):
         self._sleep = sleep
 
     def add(self, entry):
-        self.entries.appendleft(entry)
+        self.entries.append(entry)
 
     def eof(self, fid):
         self.open_files.remove(fid)
 
+    def len(self):
+        return len(self.entries)
+
     def get(self):
-        while self.open_files or self.entries:
+        while True:
             try:
-                entry = self.entries.pop()
+                entry = self.entries.popleft()
                 yield entry
             except IndexError:
-                if self._sleep:
-                    logging.debug('Sleeping %ss..', self._sleep)
-                    time.sleep(self._sleep)
-                pass
+                return
 
 
 COLORS = [
@@ -420,24 +562,29 @@ class RedisOutputThread(Thread):
         file_names = self.aggregator.file_names
 
         total = 0
-        start = time.time()
+        chunk_start = time.time()
+        write_interval = 1
         while True:
-            i = 0
-            for entry in self.aggregator.get():
-                d = entry.as_logstash()
-                d['logfile'] = file_names[entry.fid]
-                self._pipeline.rpush(self._redis_namespace, json.dumps(d))
-                i += 1
-                if i > 10:
-                    total += i
-                    if total % 100 == 0:
-                        now = time.time()
-                        logging.debug('Pushed %s entries (%s/s)', total, total / (now - start))
-                    break
-            try:
-                self._pipeline.execute()
-            except:
-                logging.exception('Redis connection failure')
+            time.sleep(write_interval)
+            l = self.aggregator.len()
+            if l > 0:
+                i = 0
+                for entry in self.aggregator.get():
+                    d = entry.as_logstash()
+                    d['logfile'] = file_names[entry.fid]
+                    self._pipeline.rpush(self._redis_namespace, json.dumps(d))
+                    i += 1
+                    if i > l:
+                        break
+                total += i
+                try:
+                    self._pipeline.execute()
+                except:
+                    logging.exception('Redis connection failure')
+                now = time.time()
+                logging.debug('Pushed %s entries (%.1f/s), queue length %s', i, i / (now - chunk_start),
+                              self.aggregator.len())
+                chunk_start = now
 
 
 class OutputThread(Thread):
@@ -483,8 +630,10 @@ class OutputThread(Thread):
             else:
                 fd.write('   -  ')
             fd.write(' ' + (entry.thread or '-'))
-            fd.write(' ' + entry.source_class)
-            fd.write(' ' + entry.source_location)
+            fd.write(' ' + entry.clazz)
+            fd.write('.' + entry.method)
+            fd.write(' ' + entry.file)
+            fd.write(':' + str(entry.line))
             if entry.level == LogLevel.FATAL:
                 fd.write('\033[95m')
             elif entry.level == LogLevel.ERROR:
@@ -540,10 +689,11 @@ def main():
     parser.add_argument('--redis-host', help='redis host')
     parser.add_argument('--redis-port', type=int, default=6379, help='redis port')
     parser.add_argument('--redis-namespace', help='redis namespace')
+    parser.add_argument('--sincedb', help='sincedb path')
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO))
+    logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO), format=LOG_FORMAT)
 
     file_names = args.files
 
@@ -605,8 +755,16 @@ def main():
             file_names[fid] = name
         used_file_names.add(name)
         parser = Log4Jparser()
-        readers.append(LogReader(fid, fpath, parser, aggregator, tail=tail_lines, follow=args.follow,
-                       filterdef=filterdef))
+        readers.append(LogReader(
+            fid,
+            fpath,
+            parser,
+            aggregator,
+            tail=tail_lines,
+            follow=args.follow,
+            filterdef=filterdef,
+            sincedb=args.sincedb,
+        ))
         fid += 1
     for reader in readers:
         reader.start()
