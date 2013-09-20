@@ -5,6 +5,10 @@ Logfire is a console based log file reader with color and tail-like "follow" sup
 
 Currently only two log4j pattern layouts are supported.
 
+Basic example:
+
+    ./logfire.py example.log
+
 Example:
 
     ./logfire.py -t -f -c --truncate=200 myapp-log4j.log mysecondapp.log
