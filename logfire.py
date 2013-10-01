@@ -143,7 +143,10 @@ class Log4Jparser(object):
                 line = int(line.rstrip('):'))
                 msg = cols[col_message]
                 while True:
-                    lastline = fd.readline()
+                    try:
+                        lastline = fd.readline()
+                    except ValueError:
+                        break
                     if not lastline:
                         break
                     if lastline[:2] == '20' and lastline[23:24] == ' ':
