@@ -4,14 +4,15 @@ from unittest import TestCase
 import logging
 
 import logfire
+from logfire import Log4Jparser, LogLevel, log_level_from_log4j_tag
 
 
-class LogfireTests(TestCase):
+class Log4JparserTests(TestCase):
 
     @classmethod
     def setUpClass(cls):
         cls.fake_logging = FakeLogging()
-        cls.sample_line = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Exception!'
+        cls.sample_line = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error!'
 
     def setUp(self):
         logfire.logging = self.fake_logging
@@ -20,15 +21,15 @@ class LogfireTests(TestCase):
         logfire.logfire = logging
         self.fake_logging.reset()
 
-    def test_regression_log4j_endless_loop(self):
+    def test_regression_too_few_columns_endless_loop(self):
         """Lines with too few columns do no longer cause an endless loop."""
 
-        list(logfire.Log4Jparser().read(0, StringIO(self.sample_line + '\n2000-01-01 00:00:00,001 GARBAGE')))
+        list(Log4Jparser().read(0, StringIO(self.sample_line + '\n2000-01-01 00:00:00,001 GARBAGE')))
 
     def test_skipped_lines_are_logged(self):
         """Skipped lines are logged."""
 
-        list(logfire.Log4Jparser().read(0, StringIO('NO_DATE\n2000-01-01 00:00:00,000 NO_COLUMNS')))
+        list(Log4Jparser().read(0, StringIO('NO_DATE\n2000-01-01 00:00:00,000 NO_COLUMNS')))
         warnings = self.fake_logging.warnings
         self.assertEqual(len(warnings), 2)
         self.assertTrue('NO_DATE' in warnings[0])
@@ -37,20 +38,20 @@ class LogfireTests(TestCase):
     def test_level_is_extracted(self):
         """The log level is extracted from log4j lines."""
 
-        entries = list(logfire.Log4Jparser().read(0, StringIO(self.sample_line)))
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].level, logfire.LogLevel.ERROR)
+        self.assertEqual(entries[0].level, LogLevel.ERROR)
 
     def test_level_mapping(self):
         """The log4j log level is correctly mapped to LogLevel intances."""
 
-        self.assertEqual(logfire.log_level_from_log4j_tag('TRACE'), logfire.LogLevel.TRACE)
-        self.assertEqual(logfire.log_level_from_log4j_tag('[DEBUG]'), logfire.LogLevel.DEBUG)
-        self.assertEqual(logfire.log_level_from_log4j_tag('INFO'), logfire.LogLevel.INFO)
-        self.assertEqual(logfire.log_level_from_log4j_tag('[WARN]'), logfire.LogLevel.WARN)
-        self.assertEqual(logfire.log_level_from_log4j_tag('WARNING'), logfire.LogLevel.WARN)
-        self.assertEqual(logfire.log_level_from_log4j_tag('[ERROR]'), logfire.LogLevel.ERROR)
-        self.assertEqual(logfire.log_level_from_log4j_tag('FATAL'), logfire.LogLevel.FATAL)
+        self.assertEqual(log_level_from_log4j_tag('TRACE'), LogLevel.TRACE)
+        self.assertEqual(log_level_from_log4j_tag('[DEBUG]'), LogLevel.DEBUG)
+        self.assertEqual(log_level_from_log4j_tag('INFO'), LogLevel.INFO)
+        self.assertEqual(log_level_from_log4j_tag('[WARN]'), LogLevel.WARN)
+        self.assertEqual(log_level_from_log4j_tag('WARNING'), LogLevel.WARN)
+        self.assertEqual(log_level_from_log4j_tag('[ERROR]'), LogLevel.ERROR)
+        self.assertEqual(log_level_from_log4j_tag('FATAL'), LogLevel.FATAL)
 
 
 class FakeLogging(object):
