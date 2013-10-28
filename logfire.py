@@ -150,7 +150,7 @@ class Log4Jparser(object):
             i += 1
 
     def _read_log_level(self, columns, index):
-        return LogLevel.FROM_FIRST_LETTER.get(columns[index].lstrip('[')[0], LogLevel.FATAL)
+        return LogLevel.FROM_FIRST_LETTER.get(columns[index].lstrip('[')[0:1], LogLevel.FATAL)
 
     def _read_flow_id(self, columns, index):
         if index is None:
@@ -165,10 +165,10 @@ class Log4Jparser(object):
             return columns[index].rstrip(':')
 
     def _read_code_position(self, columns, index):
-        class_and_method, file_and_line = columns[index].rstrip(':)').rsplit('(', 1)
-        class_, method = class_and_method.rsplit('.', 1)
-        file_, line = file_and_line.rsplit(':', 1)
-        return class_, method, file_, int(line)
+        class_and_method, _, file_and_line_number = columns[index].rstrip(':)').rpartition('(')
+        class_, _, method = class_and_method.rpartition('.')
+        file_, _, line_number = file_and_line_number.rpartition(':')
+        return class_, method, file_, self._int_from_line_number(line_number)
 
     def _read_message(self, columns, index, fd):
         lines = [columns[index]]
@@ -182,6 +182,13 @@ class Log4Jparser(object):
 
     def _is_continuation_line(self, line):
         return line and not (line[:2] == '20' and line[23:24] == ' ')
+
+    def _int_from_line_number(self, line_number):
+        try:
+            return int(line_number)
+        except ValueError:
+            logging.warn('Found the invalid line number "%s".', line_number)
+            return -1
 
 
 def parse_timestamp(ts):
