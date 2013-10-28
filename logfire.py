@@ -126,8 +126,8 @@ class Log4Jparser(object):
                     logging.warn('Skipped a line because it does not have a suffient number of columns: "%s".', line)
                     continue
                 level = log_level_from_log4j_tag(cols[col_level])
-                flowid = col_flowid is not None and cols[col_flowid] or None
-                thread = col_thread is not None and cols[col_thread].rstrip(':') or None
+                flowid = self._read_flow_id(cols, col_flowid)
+                thread = self._read_thread(cols, col_thread)
                 source_class, source_location = cols[col_location].split('(', 1)
                 pos = source_class.rindex('.')
                 clazz, method = source_class[:pos], source_class[pos + 1:]
@@ -151,6 +151,18 @@ class Log4Jparser(object):
                     message=msg.rstrip(),
                 )
             i += 1
+
+    def _read_flow_id(self, columns, index):
+        if index is None:
+            return None
+        else:
+            return columns[index].rstrip(':')
+
+    def _read_thread(self, columns, index):
+        if index is None:
+            return None
+        else:
+            return columns[index].rstrip(':')
 
     def _read_message_continuation_lines(self, fd):
         continuation_lines = []

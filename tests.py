@@ -37,15 +37,15 @@ class Log4JparserTests(TestCase):
         self.assertTrue('NO_DATE' in warnings[0])
         self.assertTrue('NO_COLUMNS' in warnings[1])
 
-    def test_level_is_extracted(self):
-        """The log level is extracted from log4j lines."""
+    def test_level_is_read(self):
+        """The log level is read correctly."""
 
         entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].level, LogLevel.ERROR)
 
     def test_level_mapping(self):
-        """The log4j log level is correctly mapped to LogLevel intances."""
+        """The log level is correctly mapped to LogLevel intances."""
 
         self.assertEqual(log_level_from_log4j_tag('TRACE'), LogLevel.TRACE)
         self.assertEqual(log_level_from_log4j_tag('[DEBUG]'), LogLevel.DEBUG)
@@ -54,6 +54,20 @@ class Log4JparserTests(TestCase):
         self.assertEqual(log_level_from_log4j_tag('WARNING'), LogLevel.WARN)
         self.assertEqual(log_level_from_log4j_tag('[ERROR]'), LogLevel.ERROR)
         self.assertEqual(log_level_from_log4j_tag('FATAL'), LogLevel.FATAL)
+
+    def test_flow_id_is_read(self):
+        """The flow ID is read correctly."""
+
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].flowid, 'FlowID')
+
+    def test_thread_is_read(self):
+        """The thread is read correctly."""
+
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].thread, 'Thread')
 
     def test_continuation_lines_are_read(self):
         """Multiline messages are read correctly."""
