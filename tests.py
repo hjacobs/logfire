@@ -11,6 +11,7 @@ class LogfireTests(TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fake_logging = FakeLogging()
+        cls.sample_line = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Exception!'
 
     def setUp(self):
         logfire.logging = self.fake_logging
@@ -22,9 +23,7 @@ class LogfireTests(TestCase):
     def test_regression_log4j_endless_loop(self):
         """Lines with too few columns do no longer cause an endless loop."""
 
-        line1 = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Exception!'
-        line2 = '2000-01-01 00:00:00,001 GARBAGE'
-        list(logfire.Log4Jparser().read(0, StringIO(line1 + '\n' + line2)))
+        list(logfire.Log4Jparser().read(0, StringIO(self.sample_line + '\n2000-01-01 00:00:00,001 GARBAGE')))
 
     def test_skipped_lines_are_logged(self):
         """Skipped lines are logged."""
@@ -35,6 +34,23 @@ class LogfireTests(TestCase):
         self.assertTrue('NO_DATE' in warnings[0])
         self.assertTrue('NO_COLUMNS' in warnings[1])
 
+    def test_level_is_extracted(self):
+        """The log level is extracted from log4j lines."""
+
+        entries = list(logfire.Log4Jparser().read(0, StringIO(self.sample_line)))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].level, logfire.LogLevel.ERROR)
+
+    def test_level_mapping(self):
+        """The log4j log level is correctly mapped to LogLevel intances."""
+
+        self.assertEqual(logfire.log_level_from_log4j_tag('TRACE'), logfire.LogLevel.TRACE)
+        self.assertEqual(logfire.log_level_from_log4j_tag('[DEBUG]'), logfire.LogLevel.DEBUG)
+        self.assertEqual(logfire.log_level_from_log4j_tag('INFO'), logfire.LogLevel.INFO)
+        self.assertEqual(logfire.log_level_from_log4j_tag('[WARN]'), logfire.LogLevel.WARN)
+        self.assertEqual(logfire.log_level_from_log4j_tag('WARNING'), logfire.LogLevel.WARN)
+        self.assertEqual(logfire.log_level_from_log4j_tag('[ERROR]'), logfire.LogLevel.ERROR)
+        self.assertEqual(logfire.log_level_from_log4j_tag('FATAL'), logfire.LogLevel.FATAL)
 
 
 class FakeLogging(object):

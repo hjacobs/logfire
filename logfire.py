@@ -125,19 +125,7 @@ class Log4Jparser(object):
                     logging.warn('Skipped a line because it does not have a suffient number of columns: "%s".', line)
                     lastline = None
                     continue
-                c = cols[col_level].strip('[]')[0]
-                if c == 'T':
-                    level = LogLevel.TRACE
-                elif c == 'D':
-                    level = LogLevel.DEBUG
-                elif c == 'I':
-                    level = LogLevel.INFO
-                elif c == 'W':
-                    level = LogLevel.WARN
-                elif c == 'E':
-                    level = LogLevel.ERROR
-                else:
-                    level = LogLevel.FATAL
+                level = log_level_from_log4j_tag(cols[col_level])
                 flowid = col_flowid is not None and cols[col_flowid] or None
                 thread = col_thread is not None and cols[col_thread].rstrip(':') or None
                 source_class, source_location = cols[col_location].split('(', 1)
@@ -175,6 +163,22 @@ class Log4Jparser(object):
                     message=msg.rstrip(),
                 )
             i += 1
+
+
+def log_level_from_log4j_tag(tag):
+    c = tag.strip('[]')[0]
+    if c == 'T':
+        return LogLevel.TRACE
+    elif c == 'D':
+        return LogLevel.DEBUG
+    elif c == 'I':
+        return LogLevel.INFO
+    elif c == 'W':
+        return LogLevel.WARN
+    elif c == 'E':
+        return LogLevel.ERROR
+    else:
+        return LogLevel.FATAL
 
 
 def parse_timestamp(ts):
