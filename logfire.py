@@ -22,9 +22,12 @@ LOG_FORMAT = '%(asctime)s %(levelname)s: %(message)s'
 
 class LogLevel(object):
 
+    FROM_FIRST_LETTER = {}
+
     def __init__(self, priority, name):
         self.priority = priority
         self.name = name
+        LogLevel.FROM_FIRST_LETTER[name[0]] = self
 
     def __str__(self):
         return self.name
@@ -166,19 +169,7 @@ class Log4Jparser(object):
 
 
 def log_level_from_log4j_tag(tag):
-    c = tag.strip('[]')[0]
-    if c == 'T':
-        return LogLevel.TRACE
-    elif c == 'D':
-        return LogLevel.DEBUG
-    elif c == 'I':
-        return LogLevel.INFO
-    elif c == 'W':
-        return LogLevel.WARN
-    elif c == 'E':
-        return LogLevel.ERROR
-    else:
-        return LogLevel.FATAL
+    return LogLevel.FROM_FIRST_LETTER.get(tag.lstrip('[')[0], LogLevel.FATAL)
 
 
 def parse_timestamp(ts):
