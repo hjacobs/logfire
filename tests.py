@@ -69,6 +69,16 @@ class Log4JparserTests(TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].thread, 'Thread')
 
+    def test_code_position_is_read(self):
+        """The code position is read correctly."""
+
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].clazz, 'C')
+        self.assertEqual(entries[0].method, 'm')
+        self.assertEqual(entries[0].file, 'C.java')
+        self.assertEqual(entries[0].line, 23)
+
     def test_continuation_lines_are_read(self):
         """Multiline messages are read correctly."""
 

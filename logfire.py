@@ -128,11 +128,7 @@ class Log4Jparser(object):
                 level = log_level_from_log4j_tag(cols[col_level])
                 flowid = self._read_flow_id(cols, col_flowid)
                 thread = self._read_thread(cols, col_thread)
-                source_class, source_location = cols[col_location].split('(', 1)
-                pos = source_class.rindex('.')
-                clazz, method = source_class[:pos], source_class[pos + 1:]
-                _file, line = source_location.split(':', 1)
-                line = int(line.rstrip('):'))
+                clazz, method, _file, line = self._read_code_position(cols, col_location)
                 msg = cols[col_message] + self._read_message_continuation_lines(fd)
             except:
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
@@ -163,6 +159,12 @@ class Log4Jparser(object):
             return None
         else:
             return columns[index].rstrip(':')
+
+    def _read_code_position(self, columns, index):
+        class_and_method, file_and_line = columns[index].rstrip(':)').rsplit('(', 1)
+        class_, method = class_and_method.rsplit('.', 1)
+        file_, line = file_and_line.rsplit(':', 1)
+        return class_, method, file_, int(line)
 
     def _read_message_continuation_lines(self, fd):
         continuation_lines = []
