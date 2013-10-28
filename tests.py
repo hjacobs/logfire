@@ -4,7 +4,7 @@ from unittest import TestCase
 import logging
 
 import logfire
-from logfire import Log4Jparser, LogLevel, log_level_from_log4j_tag
+from logfire import Log4Jparser, LogLevel
 
 
 class Log4JparserTests(TestCase):
@@ -43,17 +43,6 @@ class Log4JparserTests(TestCase):
         entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].level, LogLevel.ERROR)
-
-    def test_level_mapping(self):
-        """The log level is correctly mapped to LogLevel intances."""
-
-        self.assertEqual(log_level_from_log4j_tag('TRACE'), LogLevel.TRACE)
-        self.assertEqual(log_level_from_log4j_tag('[DEBUG]'), LogLevel.DEBUG)
-        self.assertEqual(log_level_from_log4j_tag('INFO'), LogLevel.INFO)
-        self.assertEqual(log_level_from_log4j_tag('[WARN]'), LogLevel.WARN)
-        self.assertEqual(log_level_from_log4j_tag('WARNING'), LogLevel.WARN)
-        self.assertEqual(log_level_from_log4j_tag('[ERROR]'), LogLevel.ERROR)
-        self.assertEqual(log_level_from_log4j_tag('FATAL'), LogLevel.FATAL)
 
     def test_flow_id_is_read(self):
         """The flow ID is read correctly."""

@@ -125,12 +125,13 @@ class Log4Jparser(object):
                 if len(cols) < self.columns:
                     logging.warn('Skipped a line because it does not have a suffient number of columns: "%s".', line)
                     continue
-                level = log_level_from_log4j_tag(cols[col_level])
+                level = self._read_log_level(cols, col_level)
                 flowid = self._read_flow_id(cols, col_flowid)
                 thread = self._read_thread(cols, col_thread)
                 clazz, method, _file, line = self._read_code_position(cols, col_location)
-                msg = cols[col_message] + self._read_message_continuation_lines(fd)
+                msg = self._read_message(cols, col_message, fd)
             except:
+                raise
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
                 yield LogEntry(
@@ -144,9 +145,12 @@ class Log4Jparser(object):
                     method=method,
                     file=_file,
                     line=line,
-                    message=msg.rstrip(),
+                    message=msg,
                 )
             i += 1
+
+    def _read_log_level(self, columns, index):
+        return LogLevel.FROM_FIRST_LETTER.get(columns[index].lstrip('[')[0], LogLevel.FATAL)
 
     def _read_flow_id(self, columns, index):
         if index is None:
@@ -166,22 +170,18 @@ class Log4Jparser(object):
         file_, line = file_and_line.rsplit(':', 1)
         return class_, method, file_, int(line)
 
-    def _read_message_continuation_lines(self, fd):
-        continuation_lines = []
+    def _read_message(self, columns, index, fd):
+        lines = [columns[index]]
         while True:
-            line = fd.readline()
-            if self._is_continuation_line(line):
-                continuation_lines.append(line)
+            l = fd.readline()
+            if self._is_continuation_line(l):
+                lines.append(l)
             else:
-                fd.seek(-len(line), os.SEEK_CUR)
-                return ''.join(continuation_lines)
+                fd.seek(-len(l), os.SEEK_CUR)
+                return ''.join(lines).rstrip()
 
     def _is_continuation_line(self, line):
         return line and not (line[:2] == '20' and line[23:24] == ' ')
-
-
-def log_level_from_log4j_tag(tag):
-    return LogLevel.FROM_FIRST_LETTER.get(tag.lstrip('[')[0], LogLevel.FATAL)
 
 
 def parse_timestamp(ts):
