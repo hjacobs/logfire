@@ -117,9 +117,11 @@ class Log4Jparser(object):
             try:
                 ts = line[:23]
                 if ts[:2] != '20':
+                    lastline = None
                     continue
                 cols = line[24:].split(delimiter, maxsplit)
                 if len(cols) < self.columns:
+                    lastline = None
                     continue
                 c = cols[col_level].strip('[]')[0]
                 if c == 'T':
