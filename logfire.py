@@ -133,19 +133,7 @@ class Log4Jparser(object):
                 clazz, method = source_class[:pos], source_class[pos + 1:]
                 _file, line = source_location.split(':', 1)
                 line = int(line.rstrip('):'))
-                msg = cols[col_message]
-                while True:
-                    try:
-                        continuation_line = fd.readline()
-                    except ValueError:
-                        break
-                    if not continuation_line:
-                        break
-                    if continuation_line[:2] == '20' and continuation_line[23:24] == ' ':
-                        # start of new log entry
-                        fd.seek(-len(continuation_line), os.SEEK_CUR)
-                        break
-                    msg += continuation_line
+                msg = cols[col_message] + self._read_message_continuation_lines(fd)
             except:
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
@@ -163,6 +151,22 @@ class Log4Jparser(object):
                     message=msg.rstrip(),
                 )
             i += 1
+
+    def _read_message_continuation_lines(self, fd):
+        continued_message = ''
+        while True:
+            try:
+                continuation_line = fd.readline()
+            except ValueError:
+                break
+            if not continuation_line:
+                break
+            if continuation_line[:2] == '20' and continuation_line[23:24] == ' ':
+                # start of new log entry
+                fd.seek(-len(continuation_line), os.SEEK_CUR)
+                break
+            continued_message += continuation_line
+        return continued_message
 
 
 def log_level_from_log4j_tag(tag):
