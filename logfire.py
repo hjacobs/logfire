@@ -166,7 +166,7 @@ class Log4Jparser(object):
                 fd.seek(-len(line), os.SEEK_CUR)
                 break
             continuation_lines.append(line)
-        return '\n'.join(continuation_lines)
+        return ''.join(continuation_lines)
 
 
 def log_level_from_log4j_tag(tag):
