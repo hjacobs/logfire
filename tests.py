@@ -13,6 +13,8 @@ class Log4JparserTests(TestCase):
     def setUpClass(cls):
         cls.fake_logging = FakeLogging()
         cls.sample_line = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error!'
+        cls.another_sample_line = '2000-01-01 00:00:00,001 FlowID INFO Thread C.m(C.java:25): No error! That\'s weird.'
+        cls.sample_multiline_entry = cls.sample_line + '\nE: :(\n        at D.n(D.java:42)\n        at E.o(E.java:5'
 
     def setUp(self):
         logfire.logging = self.fake_logging
@@ -52,6 +54,13 @@ class Log4JparserTests(TestCase):
         self.assertEqual(log_level_from_log4j_tag('WARNING'), LogLevel.WARN)
         self.assertEqual(log_level_from_log4j_tag('[ERROR]'), LogLevel.ERROR)
         self.assertEqual(log_level_from_log4j_tag('FATAL'), LogLevel.FATAL)
+
+    def test_first_non_continuation_line_is_handles(self):
+        """The code for reading multiline messages does not cause log entries to be skipped."""
+
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_multiline_entry + '\n' + self.another_sample_line)))
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[1].message, 'No error! That\'s weird.')
 
 
 class FakeLogging(object):

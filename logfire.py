@@ -111,22 +111,19 @@ class Log4Jparser(object):
         col_location = self.col_location
         col_message = self.col_message
 
-        lastline = None
         i = 0
         while True:
-            line = lastline or fd.readline()
+            line = fd.readline()
             if not line:
                 break
             try:
                 ts = line[:23]
                 if ts[:2] != '20':
                     logging.warn('Skipped a line because it does not appear to start with a date: "%s".', line)
-                    lastline = None
                     continue
                 cols = line[24:].split(delimiter, maxsplit)
                 if len(cols) < self.columns:
                     logging.warn('Skipped a line because it does not have a suffient number of columns: "%s".', line)
-                    lastline = None
                     continue
                 level = log_level_from_log4j_tag(cols[col_level])
                 flowid = col_flowid is not None and cols[col_flowid] or None
@@ -139,16 +136,16 @@ class Log4Jparser(object):
                 msg = cols[col_message]
                 while True:
                     try:
-                        lastline = fd.readline()
+                        continuation_line = fd.readline()
                     except ValueError:
                         break
-                    if not lastline:
+                    if not continuation_line:
                         break
-                    if lastline[:2] == '20' and lastline[23:24] == ' ':
+                    if continuation_line[:2] == '20' and continuation_line[23:24] == ' ':
                         # start of new log entry
+                        fd.seek(-len(continuation_line), os.SEEK_CUR)
                         break
-                    msg += lastline
-                    lastline = None
+                    msg += continuation_line
             except:
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
