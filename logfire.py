@@ -117,10 +117,12 @@ class Log4Jparser(object):
             try:
                 ts = line[:23]
                 if ts[:2] != '20':
+                    logging.warn('Skipped a line because it does not appear to start with a date: "%s".', line)
                     lastline = None
                     continue
                 cols = line[24:].split(delimiter, maxsplit)
                 if len(cols) < self.columns:
+                    logging.warn('Skipped a line because it does not have a suffient number of columns: "%s".', line)
                     lastline = None
                     continue
                 c = cols[col_level].strip('[]')[0]
