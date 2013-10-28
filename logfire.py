@@ -153,20 +153,20 @@ class Log4Jparser(object):
             i += 1
 
     def _read_message_continuation_lines(self, fd):
-        continued_message = ''
+        continuation_lines = []
         while True:
             try:
-                continuation_line = fd.readline()
+                line = fd.readline()
             except ValueError:
                 break
-            if not continuation_line:
+            if not line:
                 break
-            if continuation_line[:2] == '20' and continuation_line[23:24] == ' ':
+            if line[:2] == '20' and line[23:24] == ' ':
                 # start of new log entry
-                fd.seek(-len(continuation_line), os.SEEK_CUR)
+                fd.seek(-len(line), os.SEEK_CUR)
                 break
-            continued_message += continuation_line
-        return continued_message
+            continuation_lines.append(line)
+        return '\n'.join(continuation_lines)
 
 
 def log_level_from_log4j_tag(tag):
