@@ -37,29 +37,112 @@ class Log4JparserTests(TestCase):
         self.assertTrue('NO_DATE' in warnings[0])
         self.assertTrue('NO_COLUMNS' in warnings[1])
 
-    def test_level_is_read(self):
-        """The log level is read correctly."""
+    def test_read_log_level_mapping(self):
+        """The log level is correctly mapped to LogLevel intances."""
+
+        parser = Log4Jparser()
+        self.assertEqual(parser._read_log_level(['TRACE'], 0), LogLevel.TRACE)
+        self.assertEqual(parser._read_log_level(['[DEBUG]'], 0), LogLevel.DEBUG)
+        self.assertEqual(parser._read_log_level(['INFO:'], 0), LogLevel.INFO)
+        self.assertEqual(parser._read_log_level(['[WARN]'], 0), LogLevel.WARN)
+        self.assertEqual(parser._read_log_level(['WARNING'], 0), LogLevel.WARN)
+        self.assertEqual(parser._read_log_level(['[ERROR]:'], 0), LogLevel.ERROR)
+        self.assertEqual(parser._read_log_level(['FATAL'], 0), LogLevel.FATAL)
+
+    def test_read_log_level_handles_malformed_input(self):
+        """Malformed log levels are handled."""
+
+        parser = Log4Jparser()
+        self.assertEqual(parser._read_log_level([''], 0), LogLevel.FATAL)
+        self.assertEqual(parser._read_log_level(['[]'], 0), LogLevel.FATAL)
+        self.assertEqual(parser._read_log_level(['BORING'], 0), LogLevel.FATAL)
+
+    def test_read_log_level_in_context(self):
+        """The log level is correctly extracted from the log entry."""
 
         entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].level, LogLevel.ERROR)
 
-    def test_flow_id_is_read(self):
-        """The flow ID is read correctly."""
+    def test_read_flow_id_strips_colons(self):
+        """Trailing colons are correctly stripped from flow IDs."""
+
+        parser = Log4Jparser()
+        self.assertEqual(parser._read_flow_id(['FlowID'], 0), 'FlowID')
+        self.assertEqual(parser._read_flow_id(['FlowID:'], 0), 'FlowID')
+
+    def test_read_flow_id_without_flow_id(self):
+        """Lines without flow ID are handled correctly."""
+
+        self.assertEqual(Log4Jparser()._read_flow_id(['not a flow ID'], None), None)
+
+    def test_read_flow_id_in_context(self):
+        """The flow ID is correctly extracted from the log entry."""
 
         entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].flowid, 'FlowID')
 
-    def test_thread_is_read(self):
-        """The thread is read correctly."""
+    def test_read_thread_strips_colons(self):
+        """Trailing colons are correctly stripped from threads."""
+
+        parser = Log4Jparser()
+        self.assertEqual(parser._read_thread(['Thread'], 0), 'Thread')
+        self.assertEqual(parser._read_thread(['Thread:'], 0), 'Thread')
+
+    def test_read_thread_without_thread(self):
+        """Lines without thread are handled correctly."""
+
+        self.assertEqual(Log4Jparser()._read_thread(['not a thread'], None), None)
+
+    def test_read_flow_id_in_context(self):
+        """The thread is correctly extracted from the log entry."""
 
         entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].thread, 'Thread')
 
-    def test_code_position_is_read(self):
-        """The code position is read correctly."""
+    def test_read_code_position_strips_trailing_colons(self):
+        """Trailing colons are correctly stripped from code positions."""
+
+        parser = Log4Jparser()
+        self.assertEqual(parser._read_code_position(['C.m(C.java:23)'], 0), ('C', 'm', 'C.java', 23))
+        self.assertEqual(parser._read_code_position(['C.m(C.java:23):'], 0), ('C', 'm', 'C.java', 23))
+
+    def test_read_code_position_handles_malformed_input(self):
+        """Malformed code positions are handled."""
+
+        def assert_is_parsed(code_position_string):
+            code_position = parser._read_code_position([code_position_string], 0)
+            self.assertEqual(len(code_position), 4)
+            self.assertTrue(isinstance(code_position[3], int))
+
+        parser = Log4Jparser()
+        assert_is_parsed('?(C.java:23)')               # ('', '?', 'C.java', 23))
+        assert_is_parsed('.m(C.java:23)')              # ('', 'm', 'C.java', 23))
+        assert_is_parsed('C.(C.java:23)')              # ('C', '', 'C.java', 23))
+        assert_is_parsed('.(C.java:23)')               # ('', '', 'C.java', 23))
+        assert_is_parsed('(C.java:23)')                # ('', '', 'C.java', 23))
+        assert_is_parsed('C.m(?)')                     # ('C', 'm', '?', -1))
+        assert_is_parsed('C.m(:23)')                   # ('C', 'm', '', 23))
+        assert_is_parsed('C.m(C.java:)')               # ('C', 'm', 'C.java', -1))
+        assert_is_parsed('C.m(:)')                     # ('C', 'm', '', -1))
+        assert_is_parsed('C.m()')                      # ('C', 'm', '', -1))
+        assert_is_parsed('C.m(C.java:NaN)')            # ('C', 'm', 'C.java', -1))
+        assert_is_parsed('C.m(C.java:3rr0r)')          # ('C', 'm', 'C.java', -1))
+        assert_is_parsed('?.?:?')                      # ('', '', '?.?', -1))
+        assert_is_parsed('(C.java:23)')                # ('', '', 'C.java', 23))
+        assert_is_parsed('C.m(')                       # ('C', 'm', '', -1))
+        assert_is_parsed('(')                          # ('', '', '', -1))
+        assert_is_parsed('')                           # ('', '', '', -1))
+        assert_is_parsed('C.m(C.java:23:42)')          # ('C', 'm', 'C.java', -1))
+        assert_is_parsed('C.m(C.java:23)(D.java:42)')  # ('C.m(C', 'java:23)', 'D.java', 42))
+        assert_is_parsed('C.m(C.ja(D.java:42)va:23)')  # ('C.m(C', 'ja', 'D.java', -1))
+        assert_is_parsed('C.m(C.java:23')              # ('C', 'm', 'C.java', 23))
+        assert_is_parsed('C.m(C.java:23:')             # ('C', 'm', 'C.java', 23))
+
+    def test_read_code_position_in_context(self):
+        """The code position is correctly extracted from the log entry."""
 
         entries = list(Log4Jparser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
@@ -68,14 +151,29 @@ class Log4JparserTests(TestCase):
         self.assertEqual(entries[0].file, 'C.java')
         self.assertEqual(entries[0].line, 23)
 
-    def test_continuation_lines_are_read(self):
+    def test_read_message_reads_single_line_entries(self):
+        """Single-line messages are read correctly."""
+
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_line + '\n' + self.another_sample_line)))
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].message, 'Error!')
+        self.assertEqual(entries[1].message, 'No error! That\'s weird.')
+
+    def test_read_message_reads_multiline_entries(self):
         """Multiline messages are read correctly."""
 
-        entries = list(Log4Jparser().read(0, StringIO(self.sample_multiline_entry + '\n' + self.another_sample_line)))        
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_multiline_entry + '\n' + self.another_sample_line)))
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0].message, 'Error!\nE: :(\n        at D.n(D.java:42)\n        at E.o(E.java:5)')
 
-    def test_first_non_continuation_line_is_handles(self):
+    def test_read_message_reads_terminal_multiline_entries(self):
+        """Multiline messages at the end of the file are read correctly."""
+
+        entries = list(Log4Jparser().read(0, StringIO(self.sample_multiline_entry)))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].message, 'Error!\nE: :(\n        at D.n(D.java:42)\n        at E.o(E.java:5)')
+
+    def test_read_message_does_not_cause_log_entries_to_be_skipped(self):
         """The code for reading multiline messages does not cause log entries to be skipped."""
 
         entries = list(Log4Jparser().read(0, StringIO(self.sample_multiline_entry + '\n' + self.another_sample_line)))
@@ -86,7 +184,7 @@ class Log4JparserTests(TestCase):
 class FakeLogging(object):
 
     def __init__(self):
-        self.reset()        
+        self.reset()
 
     def warn(self, msg, *args, **kwargs):
         self.warnings.append(self.format_message(msg, args))

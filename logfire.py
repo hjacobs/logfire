@@ -131,7 +131,6 @@ class Log4Jparser(object):
                 clazz, method, _file, line = self._read_code_position(cols, col_location)
                 msg = self._read_message(cols, col_message, fd)
             except:
-                raise
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
                 yield LogEntry(
@@ -150,7 +149,7 @@ class Log4Jparser(object):
             i += 1
 
     def _read_log_level(self, columns, index):
-        return LogLevel.FROM_FIRST_LETTER.get(columns[index].lstrip('[')[0:1], LogLevel.FATAL)
+        return LogLevel.FROM_FIRST_LETTER.get(columns[index].lstrip('[')[:1], LogLevel.FATAL)
 
     def _read_flow_id(self, columns, index):
         if index is None:
@@ -167,7 +166,7 @@ class Log4Jparser(object):
     def _read_code_position(self, columns, index):
         class_and_method, _, file_and_line_number = columns[index].rstrip(':)').rpartition('(')
         class_, _, method = class_and_method.rpartition('.')
-        file_, _, line_number = file_and_line_number.rpartition(':')
+        file_, _, line_number = file_and_line_number.partition(':')
         return class_, method, file_, self._int_from_line_number(line_number)
 
     def _read_message(self, columns, index, fd):
