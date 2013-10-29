@@ -289,28 +289,26 @@ class LogReader(Thread):
             return False
 
     def _seek_tail(self):
-        n = self.tail
-        logging.debug('Seeking to %s tail lines', n)
-        l = os.path.getsize(self._filename)
-        s = -1024 * n
-        if s * -1 >= l:
-            # apparently the file is too small
-            # => seek to start of file
-            logging.debug('file too small')
-            self._file.seek(0)
-            return
-        self._file.seek(s, 2)
-        t = self._file.tell()
-        contents = self._file.read()
-        e = len(contents)
-        i = 0
-        while e >= 0:
-            e = contents.rfind('\n', 0, e)
-            if e >= 0:
-                i += 1
-                if i >= n:
-                    self._file.seek(t + e)
-                    break      
+        chunk_size = 1024
+        file_size = os.fstat(self._file.fileno()).st_size
+        chunk_count = (file_size // chunk_size) + bool(file_size % chunk_size)
+
+        newline_count = 0
+
+        for chunk_index in reversed(range(chunk_count)):
+            self._file.seek(chunk_size * chunk_index)
+            chunk = self._file.read(chunk_size)
+
+            current_newline_position = chunk.rfind('\n')
+            while current_newline_position != -1:
+                if newline_count == self.tail:
+                    self._file.seek(current_newline_position + 1)
+                    return
+                else:
+                    newline_count += 1
+                    current_newline_position = chunk.rfind('\n', 0, current_newline_position)
+
+        self._file.seek(0)
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""

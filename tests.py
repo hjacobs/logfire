@@ -250,12 +250,12 @@ class LogReaderTests(TestCase):
             self.assertEqual(reader._fid, 23)
 
     def test_seek_sincedb_position_no_sincedb(self):
-        self.write_log_file('XXXX\n' * 10)
+        self.write_log_file('XXXX\n' * 100)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db', tail=100)
+            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db', tail=10)
             reader._file = f
             reader._seek_position()
-            self.assertEqual(f.tell(), 0)
+            self.assertEqual(f.tell(), 450)
             self.assertEqual(self.fake_logging.warnings, ['Failed to read the sincedb file for "log.log".'])
 
     def test_seek_tail_not_enough_lines(self):
@@ -265,6 +265,22 @@ class LogReaderTests(TestCase):
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 0)
+
+    def test_seek_tail_one_chunk(self):
+        self.write_log_file('XXXX\n' * 100)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', tail=10)
+            reader._file = f
+            reader._seek_position()
+            self.assertEqual(f.tell(), 450)
+
+    def test_seek_tail_multiple_chunk(self):
+        self.write_log_file('XXXX\n' * 1000)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', tail=900)
+            reader._file = f
+            reader._seek_position()
+            self.assertEqual(f.tell(), 500)
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
