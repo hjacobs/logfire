@@ -128,6 +128,8 @@ class Log4jParser(object):
     def read(self, fid, logfile):
         """read log4j formatted log file"""
 
+        assert 'b' in getattr(logfile, 'mode', 'rb'), 'The file has not been opened in binary mode.'
+
         maxsplit = self.column_count - 1
         delimiter = self.delimiter
         flow_id_column_index = self.flow_id_column_index
@@ -143,19 +145,20 @@ class Log4jParser(object):
                 break
             try:
                 ts = line[:23]
-                if ts[:2] != '20':
+                if not ts.startswith('20'):
                     logging.warn('Skipped a line because it does not appear to start with a date: "%s".', line)
                     continue
                 columns = line[24:].split(delimiter, maxsplit)
                 if len(columns) < self.column_count:
-                    logging.warn('Skipped a line because it does not have a suffient number of columns: "%s".', line)
+                    logging.warn('Skipped a line because it does not have a sufficient number of columns: "%s".', line)
                     continue
                 level = self._read_log_level(columns, level_column_index)
                 flow_id = self._read_flow_id(columns, flow_id_column_index)
                 thread = self._read_thread(columns, thread_column_index)
                 class_, method, file_, line_number = self._read_code_position(columns, location_column_index)
                 message = self._read_message(columns, message_column_index, logfile)
-            except:
+            except Exception:  #pragma: nocover
+                # This shouldn't actually be possible.
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
                 yield LogEntry(
@@ -212,7 +215,7 @@ class Log4jParser(object):
                 return ''.join(lines).rstrip()
 
     def _is_continuation_line(self, line):
-        return line and not (line[:2] == '20' and line[23:24] == ' ')
+        return line and not (line.startswith('20') and line[23:24] == ' ')
 
 
 def try_parsing_int(string, default=None):
