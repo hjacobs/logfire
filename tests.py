@@ -239,31 +239,31 @@ class LogReaderTests(TestCase):
         except OSError:
             pass
 
-    def test_seek_tail_from_sincedb(self):
+    def test_seek_sincedb_position(self):
         self.write_log_file('XXXX\n' * 100)
         self.write_sincedb_file('log.log 23 50 75')
         with open('log.log', 'rb') as f:
             reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db')
             reader._file = f
-            reader._seek_tail()
+            reader._seek_position()
             self.assertEqual(f.tell(), 50)
             self.assertEqual(reader._fid, 23)
 
-    def test_seek_tail_from_sincedb_no_sincedb(self):
+    def test_seek_sincedb_position_no_sincedb(self):
         self.write_log_file('XXXX\n' * 10)
         with open('log.log', 'rb') as f:
             reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db', tail=100)
             reader._file = f
-            reader._seek_tail()
+            reader._seek_position()
             self.assertEqual(f.tell(), 0)
             self.assertEqual(self.fake_logging.warnings, ['Failed to read the sincedb file for "log.log".'])
 
-    def test_seek_file_without_sincedb_not_enough_lines(self):
+    def test_seek_tail_not_enough_lines(self):
         self.write_log_file('XXXX\n' * 10)
         with open('log.log', 'rb') as f:
             reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', tail=100)
             reader._file = f
-            reader._seek_tail()
+            reader._seek_position()
             self.assertEqual(f.tell(), 0)
 
     def write_log_file(self, *lines):

@@ -266,10 +266,29 @@ class LogReader(Thread):
         self._sincedb_path = sincedb
         self._last_sincedb_write = None
 
-    def _seek_tail(self):
+    def _seek_position(self):
         """seek to start of "tail" (last n lines)"""
-        if self._seek_tail_from_sincedb():
-            return
+        self._seek_sincedb_position() or self._seek_tail()
+
+    def _seek_sincedb_position(self):
+        if self._sincedb_path:
+            try:
+                with open(self._sincedb()) as sincedb_file:
+                    _, fid, last_position, _ = sincedb_file.read().split()
+                last_position = int(last_position)
+                fid = int(fid)
+            except Exception:
+                logging.warning('Failed to read the sincedb file for "%s".', self._filename)
+                return False
+            else:
+                logging.info('Resumed reading "%s" at offset %d.', self._filename, last_position)
+                self._fid = fid
+                self._file.seek(last_position)
+                return True
+        else:
+            return False
+
+    def _seek_tail(self):
         n = self.tail
         logging.debug('Seeking to %s tail lines', n)
         l = os.path.getsize(self._filename)
@@ -291,25 +310,7 @@ class LogReader(Thread):
                 i += 1
                 if i >= n:
                     self._file.seek(t + e)
-                    break
-
-    def _seek_tail_from_sincedb(self):
-        if self._sincedb_path:
-            try:
-                with open(self._sincedb()) as sincedb_file:
-                    _, fid, last_position, _ = sincedb_file.read().split()
-                last_position = int(last_position)
-                fid = int(fid)
-            except Exception:
-                logging.warning('Failed to read the sincedb file for "%s".', self._filename)
-                return False
-            else:
-                logging.info('Resumed reading "%s" at offset %d.', self._filename, last_position)
-                self._fid = fid
-                self._file.seek(last_position)
-                return True
-        else:
-            return False
+                    break      
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""
@@ -416,7 +417,7 @@ class LogReader(Thread):
                 self.close()
         self._fid = self.get_file_id(st)
         if seek_to_end and self.tail:
-            self._seek_tail()
+            self._seek_position()
 
     def close(self):
         """Closes all currently open file pointers"""
