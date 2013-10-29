@@ -299,6 +299,7 @@ class LogReader(Thread):
                 with open(self._sincedb()) as sincedb_file:
                     _, fid, last_position, _ = sincedb_file.read().split()
                 last_position = int(last_position)
+                fid = int(fid)
             except Exception:
                 logging.warning('Failed to read the sincedb file for "%s".', self._filename)
                 return False

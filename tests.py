@@ -247,6 +247,7 @@ class LogReaderTests(TestCase):
             reader._file = f
             reader._seek_tail()
             self.assertEqual(f.tell(), 50)
+            self.assertEqual(reader._fid, 23)
 
     def test_seek_tail_from_sincedb_no_sincedb(self):
         self.write_log_file('XXXX\n' * 10)
