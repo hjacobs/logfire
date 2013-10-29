@@ -2,9 +2,10 @@ from StringIO import StringIO
 from unittest import TestCase
 
 import logging
+import os
 
 import logfire
-from logfire import Log4jParser, LogLevel
+from logfire import Log4jParser, LogLevel, LogReader
 
 
 class Log4jParserTests(TestCase):
@@ -217,10 +218,53 @@ class Log4jParserTests(TestCase):
         self.assertEqual(entries[1].message, 'No error! That\'s weird.')
 
 
+class LogReaderTests(TestCase):
+
+    def tearDown(self):
+        try:
+            os.remove('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794')
+        except OSError:
+            pass
+        try:
+            os.remove('log.log')
+        except OSError:
+            pass
+
+    def test_seek_tail_from_sincedb(self):
+        self.write_log_file('XXXX\n' * 100)
+        self.write_sincedb_file('log.log 23 50 75')
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db')
+            reader._file = f
+            reader._seek_tail()
+            self.assertEqual(f.tell(), 50)
+
+    def test_seek_file_without_sincedb_not_enough_lines(self):
+        self.write_log_file('XXXX\n' * 10)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', tail=100)
+            reader._file = f
+            reader._seek_tail()
+            self.assertEqual(f.tell(), 0)
+
+    def write_log_file(self, *lines):
+        with open('log.log', 'wb') as f:
+            f.write('\n'.join(lines))
+
+    def write_sincedb_file(self, contents):
+        with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'wb') as f:
+            f.write(contents)
+
+
+
+
 class FakeLogging(object):
 
     def __init__(self):
         self.reset()
+
+    def debug(self, msg, *args, **kwargs):
+        self.debugs.append(self.format_message(msg, args))
 
     def warn(self, msg, *args, **kwargs):
         self.warnings.append(self.format_message(msg, args))
@@ -235,4 +279,5 @@ class FakeLogging(object):
         return msg % args
 
     def reset(self):
+        self.debugs = []
         self.warnings = []

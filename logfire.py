@@ -268,20 +268,8 @@ class LogReader(Thread):
 
     def _seek_tail(self):
         """seek to start of "tail" (last n lines)"""
-
-        if self._sincedb_path:
-            last_pos = None
-            try:
-                with open(self._sincedb()) as fd:
-                    fname, fid, last_pos, last_size = fd.read().split()
-                last_pos = int(last_pos)
-                self._fid = fid
-            except:
-                pass
-            if last_pos is not None:
-                logging.debug('Resuming %s at offset %s', self._filename, last_pos)
-                self._file.seek(last_pos)
-                return
+        if self._seek_tail_from_sincedb():
+            return
         n = self.tail
         logging.debug('Seeking to %s tail lines', n)
         l = os.path.getsize(self._filename)
@@ -304,6 +292,22 @@ class LogReader(Thread):
                 if i >= n:
                     self._file.seek(t + e)
                     break
+
+    def _seek_tail_from_sincedb(self):
+        if self._sincedb_path:
+            last_pos = None
+            try:
+                with open(self._sincedb()) as fd:
+                    fname, fid, last_pos, last_size = fd.read().split()
+                last_pos = int(last_pos)
+                self._fid = fid
+            except:
+                pass
+            if last_pos is not None:
+                logging.debug('Resuming %s at offset %s', self._filename, last_pos)
+                self._file.seek(last_pos)
+                return True
+        return False
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""
