@@ -295,19 +295,19 @@ class LogReader(Thread):
 
     def _seek_tail_from_sincedb(self):
         if self._sincedb_path:
-            last_pos = None
             try:
-                with open(self._sincedb()) as fd:
-                    fname, fid, last_pos, last_size = fd.read().split()
-                last_pos = int(last_pos)
+                with open(self._sincedb()) as sincedb_file:
+                    _, fid, last_position, _ = sincedb_file.read().split()
+                last_position = int(last_position)
+            except Exception:
+                return False
+            else:
+                logging.debug('Resuming %s at offset %s', self._filename, last_position)
                 self._fid = fid
-            except:
-                pass
-            if last_pos is not None:
-                logging.debug('Resuming %s at offset %s', self._filename, last_pos)
-                self._file.seek(last_pos)
+                self._file.seek(last_position)
                 return True
-        return False
+        else:
+            return False
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""
