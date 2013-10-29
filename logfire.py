@@ -58,24 +58,24 @@ class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread 
         return d
 
 
-class Log4Jparser(object):
+class Log4jParser(object):
 
     def __init__(self):
         # default pattern: %d %x %p %t %l: %m%n
         self.delimiter = ' '
-        self.columns = 5
-        self.col_flowid = 0
-        self.col_level = 1
-        self.col_thread = 2
-        self.col_location = 3
-        self.col_message = 4
+        self.column_count = 5
+        self.flow_id_column_index = 0
+        self.level_column_index = 1
+        self.thread_column_index = 2
+        self.location_column_index = 3
+        self.message_column_index = 4
 
-    def auto_configure(self, fd):
-        """try to auto-configure the parser"""
+    def autoconfigure(self, logfile):
+        """try to autoconfigure the parser"""
         # TODO: Document that this method will fail if the given file does not yet contain any log entries.
 
-        sample_line = fd.readline()
-        fd.seek(0)
+        sample_line = logfile.readline()
+        logfile.seek(0)
 
         # We assume that the delimiter is always a single space character.
         self.delimiter = ' '
@@ -88,57 +88,57 @@ class Log4Jparser(object):
         # We assume it is the second, third, or fourth column after the date column
         for column_index, p in enumerate(parts[1:4], start=1):
             if self._is_valid_code_position(p):
-                self.col_location = column_index
+                self.location_column_index = column_index
                 break
         else:
             raise Exception('Cannot auto-configure the parser. There does not seem to be a code location.')
 
         # We assume that the message column (%m) comes immediately after the code location column,
         # and that it is the last column.
-        self.col_message = self.col_location + 1
-        self.columns = self.col_message + 1
+        self.message_column_index = self.location_column_index + 1
+        self.column_count = self.message_column_index + 1
 
         # We assume that, if there are exactly three columns (not counting the date column), the first
         # column after the date column is the priority column (%p), and that there are no thread (%t)
         # or flow ID (%x) columns.
-        if self.columns == 3:
-            self.col_level = 0
-            self.col_thread = None
-            self.col_flowid = None
+        if self.column_count == 3:
+            self.level_column_index = 0
+            self.thread_column_index = None
+            self.flow_id_column_index = None
 
         # We assume that, if there are exactly four columns (not counting the date column), the first
         # two column after the date column are the priority column (%p) and the thread column (%t),
         # in that order, and that there is no flow ID (%x) column.
-        if self.columns == 4:
-            self.col_level = 0
-            self.col_thread = 1
-            self.col_flowid = None
+        if self.column_count == 4:
+            self.level_column_index = 0
+            self.thread_column_index = 1
+            self.flow_id_column_index = None
 
         # We assume that, if there are exactly five columns (not counting the date column), the first
         # three column after the date column are the flow ID column (%x), the priority column (%p),
         # and the thread column (%t), in that order.
-        if self.columns == 5:
-            self.col_flowid = 0
-            self.col_level = 1
-            self.col_thread = 2
+        if self.column_count == 5:
+            self.flow_id_column_index = 0
+            self.level_column_index = 1
+            self.thread_column_index = 2
 
         # There cannot be more than five columns (not counting the date column).
         return
 
-    def read(self, fid, fd):
+    def read(self, fid, logfile):
         """read log4j formatted log file"""
 
-        maxsplit = self.columns - 1
+        maxsplit = self.column_count - 1
         delimiter = self.delimiter
-        col_flowid = self.col_flowid
-        col_level = self.col_level
-        col_thread = self.col_thread
-        col_location = self.col_location
-        col_message = self.col_message
+        flow_id_column_index = self.flow_id_column_index
+        level_column_index = self.level_column_index
+        thread_column_index = self.thread_column_index
+        location_column_index = self.location_column_index
+        message_column_index = self.message_column_index
 
         i = 0
         while True:
-            line = fd.readline()
+            line = logfile.readline()
             if not line:
                 break
             try:
@@ -146,15 +146,15 @@ class Log4Jparser(object):
                 if ts[:2] != '20':
                     logging.warn('Skipped a line because it does not appear to start with a date: "%s".', line)
                     continue
-                cols = line[24:].split(delimiter, maxsplit)
-                if len(cols) < self.columns:
+                columns = line[24:].split(delimiter, maxsplit)
+                if len(columns) < self.column_count:
                     logging.warn('Skipped a line because it does not have a suffient number of columns: "%s".', line)
                     continue
-                level = self._read_log_level(cols, col_level)
-                flowid = self._read_flow_id(cols, col_flowid)
-                thread = self._read_thread(cols, col_thread)
-                clazz, method, _file, line = self._read_code_position(cols, col_location)
-                msg = self._read_message(cols, col_message, fd)
+                level = self._read_log_level(columns, level_column_index)
+                flow_id = self._read_flow_id(columns, flow_id_column_index)
+                thread = self._read_thread(columns, thread_column_index)
+                class_, method, file_, line_number = self._read_code_position(columns, location_column_index)
+                message = self._read_message(columns, message_column_index, logfile)
             except:
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
@@ -162,14 +162,14 @@ class Log4Jparser(object):
                     fid=fid,
                     ts=ts,
                     i=i,
-                    flowid=flowid,
+                    flowid=flow_id,
                     level=level,
                     thread=thread,
-                    clazz=clazz,
+                    clazz=class_,
                     method=method,
-                    file=_file,
-                    line=line,
-                    message=msg,
+                    file=file_,
+                    line=line_number,
+                    message=message,
                 )
             i += 1
 
@@ -201,14 +201,14 @@ class Log4Jparser(object):
         file_, _, line_number = file_and_line_number.partition(':')
         return class_, method, file_, try_parsing_int(line_number, default=-1)
 
-    def _read_message(self, columns, index, fd):
+    def _read_message(self, columns, index, logfile):
         lines = [columns[index]]
         while True:
-            l = fd.readline()
+            l = logfile.readline()
             if self._is_continuation_line(l):
                 lines.append(l)
             else:
-                fd.seek(-len(l), os.SEEK_CUR)
+                logfile.seek(-len(l), os.SEEK_CUR)
                 return ''.join(lines).rstrip()
 
     def _is_continuation_line(self, line):
@@ -343,7 +343,7 @@ class LogReader(Thread):
         receiver = self.receiver
         filt = self.filterdef
         self._update_file()
-        self.parser.auto_configure(self._file)
+        self.parser.autoconfigure(self._file)
         self._update_file()
         if filt.time_from:
             self._seek_time(self._file, filt.time_from)
@@ -806,7 +806,7 @@ def main():
         if not args.redis_host:
             file_names[fid] = name
         used_file_names.add(name)
-        parser = Log4Jparser()
+        parser = Log4jParser()
         readers.append(LogReader(
             fid,
             fpath,
