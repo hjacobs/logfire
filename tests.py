@@ -23,6 +23,42 @@ class Log4JparserTests(TestCase):
         logfire.logfire = logging
         self.fake_logging.reset()
 
+    def test_auto_configure_with_thread_and_flow_id(self):
+        parser = Log4Jparser()
+        parser.auto_configure(StringIO('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Spaced message!'))
+        self.assertEqual(parser.delimiter, ' ')
+        self.assertEqual(parser.col_flowid, 0)
+        self.assertEqual(parser.col_level, 1)
+        self.assertEqual(parser.col_thread, 2)
+        self.assertEqual(parser.col_location, 3)
+        self.assertEqual(parser.col_message, 4)
+        self.assertEqual(parser.columns, 5)
+
+    def test_auto_configure_with_thread_but_without_flow_id(self):
+        parser = Log4Jparser()
+        parser.auto_configure(StringIO('2000-01-01 00:00:00,000 ERROR Thread C.m(C.java:23): Spaced message!'))
+        self.assertEqual(parser.delimiter, ' ')
+        self.assertEqual(parser.col_level, 0)
+        self.assertEqual(parser.col_thread, 1)
+        self.assertEqual(parser.col_location, 2)
+        self.assertEqual(parser.col_message, 3)
+        self.assertEqual(parser.columns, 4)
+        self.assertEqual(parser.col_flowid, None)
+
+    def test_auto_configure_without_thread_or_flow_id(self):
+        parser = Log4Jparser()
+        parser.auto_configure(StringIO('2000-01-01 00:00:00,000 ERROR C.m(C.java:23): Spaced message!'))
+        self.assertEqual(parser.delimiter, ' ')
+        self.assertEqual(parser.col_level, 0)
+        self.assertEqual(parser.col_location, 1)
+        self.assertEqual(parser.col_message, 2)
+        self.assertEqual(parser.columns, 3)
+        self.assertEqual(parser.col_thread, None)
+        self.assertEqual(parser.col_flowid, None)
+
+    def test_auto_configure_without_code_location(self):
+        self.assertRaises(Exception, Log4Jparser().auto_configure, StringIO('2000-01-01 00:00:00,000 ERROR: Message!'))
+
     def test_regression_too_few_columns_endless_loop(self):
         """Lines with too few columns do no longer cause an endless loop."""
 

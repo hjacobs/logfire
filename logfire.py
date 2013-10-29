@@ -72,33 +72,58 @@ class Log4Jparser(object):
 
     def auto_configure(self, fd):
         """try to auto-configure the parser"""
+        # TODO: Document that this method will fail if the given file does not yet contain any log entries.
 
-        try:
-            for entry in self.read(0, fd):
-                break
-        except ValueError:
-            # log4j pattern with thread name: %d [%p] %t: %l - %m%n
-            self.delimiter = None
-            self.columns = 4
-            self.col_flowid = None
-            self.col_level = 0
-            self.col_thread = 1
-            self.col_location = 2
-            self.col_message = 3
+        sample_line = fd.readline()
         fd.seek(0)
 
-        try:
-            for entry in self.read(0, fd):
+        # We assume that the delimiter is always a single space character.
+        self.delimiter = ' '
+
+        # We assume the date column (%d) is always the first column and do not assign an index to it.
+        # The column immediately following the date column has index 0.
+        parts = sample_line[24:].split(self.delimiter)
+
+        # The code location column (%l) has a very distinctive format, usually, so we can search for it.
+        # We assume it is the second, third, or fourth column after the date column
+        for column_index, p in enumerate(parts[1:4], start=1):
+            if self._is_valid_code_position(p):
+                self.col_location = column_index
                 break
-        except ValueError:
-            # log4j pattern without thread name: %d [%p] %l - %m%n
-            self.columns = 3
-            self.col_flowid = None
+        else:
+            raise Exception('Cannot auto-configure the parser. There does not seem to be a code location.')
+
+        # We assume that the message column (%m) comes immediately after the code location column,
+        # and that it is the last column.
+        self.col_message = self.col_location + 1
+        self.columns = self.col_message + 1
+
+        # We assume that, if there are exactly three columns (not counting the date column), the first
+        # column after the date column is the priority column (%p), and that there are no thread (%t)
+        # or flow ID (%x) columns.
+        if self.columns == 3:
             self.col_level = 0
             self.col_thread = None
-            self.col_location = 1
-            self.col_message = 2
-        fd.seek(0)
+            self.col_flowid = None
+
+        # We assume that, if there are exactly four columns (not counting the date column), the first
+        # two column after the date column are the priority column (%p) and the thread column (%t),
+        # in that order, and that there is no flow ID (%x) column.
+        if self.columns == 4:
+            self.col_level = 0
+            self.col_thread = 1
+            self.col_flowid = None
+
+        # We assume that, if there are exactly five columns (not counting the date column), the first
+        # three column after the date column are the flow ID column (%x), the priority column (%p),
+        # and the thread column (%t), in that order.
+        if self.columns == 5:
+            self.col_flowid = 0
+            self.col_level = 1
+            self.col_thread = 2
+
+        # There cannot be more than five columns (not counting the date column).
+        return
 
     def read(self, fid, fd):
         """read log4j formatted log file"""
@@ -164,10 +189,17 @@ class Log4Jparser(object):
             return columns[index].rstrip(':')
 
     def _read_code_position(self, columns, index):
-        class_and_method, _, file_and_line_number = columns[index].rstrip(':)').rpartition('(')
+        return self._split_code_position(columns[index])
+
+    def _is_valid_code_position(self, string):
+        class_, method, file_, line_number = self._split_code_position(string)
+        return bool(class_ and method and file_ and line_number != -1)
+
+    def _split_code_position(self, string):
+        class_and_method, _, file_and_line_number = string.rstrip(':)').rpartition('(')
         class_, _, method = class_and_method.rpartition('.')
         file_, _, line_number = file_and_line_number.partition(':')
-        return class_, method, file_, self._int_from_line_number(line_number)
+        return class_, method, file_, try_parsing_int(line_number, default=-1)
 
     def _read_message(self, columns, index, fd):
         lines = [columns[index]]
@@ -182,12 +214,12 @@ class Log4Jparser(object):
     def _is_continuation_line(self, line):
         return line and not (line[:2] == '20' and line[23:24] == ' ')
 
-    def _int_from_line_number(self, line_number):
-        try:
-            return int(line_number)
-        except ValueError:
-            logging.warn('Found the invalid line number "%s".', line_number)
-            return -1
+
+def try_parsing_int(string, default=None):
+    try:
+        return int(string)
+    except ValueError:
+        return default
 
 
 def parse_timestamp(ts):
