@@ -220,7 +220,16 @@ class Log4jParserTests(TestCase):
 
 class LogReaderTests(TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        cls.fake_logging = FakeLogging()
+
+    def setUp(self):
+        logfire.logging = self.fake_logging
+
     def tearDown(self):
+        logfire.logfire = logging
+        self.fake_logging.reset()
         try:
             os.remove('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794')
         except OSError:
@@ -238,6 +247,15 @@ class LogReaderTests(TestCase):
             reader._file = f
             reader._seek_tail()
             self.assertEqual(f.tell(), 50)
+
+    def test_seek_tail_from_sincedb_no_sincedb(self):
+        self.write_log_file('XXXX\n' * 10)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db', tail=100)
+            reader._file = f
+            reader._seek_tail()
+            self.assertEqual(f.tell(), 0)
+            self.assertEqual(self.fake_logging.warnings, ['Failed to read the sincedb file for "log.log".'])
 
     def test_seek_file_without_sincedb_not_enough_lines(self):
         self.write_log_file('XXXX\n' * 10)
@@ -266,6 +284,9 @@ class FakeLogging(object):
     def debug(self, msg, *args, **kwargs):
         self.debugs.append(self.format_message(msg, args))
 
+    def info(self, msg, *args, **kwargs):
+        self.infos.append(self.format_message(msg, args))
+
     def warn(self, msg, *args, **kwargs):
         self.warnings.append(self.format_message(msg, args))
 
@@ -280,4 +301,5 @@ class FakeLogging(object):
 
     def reset(self):
         self.debugs = []
+        self.infos = []
         self.warnings = []

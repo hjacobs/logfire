@@ -300,9 +300,10 @@ class LogReader(Thread):
                     _, fid, last_position, _ = sincedb_file.read().split()
                 last_position = int(last_position)
             except Exception:
+                logging.warning('Failed to read the sincedb file for "%s".', self._filename)
                 return False
             else:
-                logging.debug('Resuming %s at offset %s', self._filename, last_position)
+                logging.info('Resumed reading "%s" at offset %d.', self._filename, last_position)
                 self._fid = fid
                 self._file.seek(last_position)
                 return True
