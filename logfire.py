@@ -208,13 +208,13 @@ class Log4jParser(object):
         lines = [columns[index]]
         while True:
             l = logfile.readline()
-            if self._is_continuation_line(l):
+            if self.is_continuation_line(l):
                 lines.append(l)
             else:
                 logfile.seek(-len(l), os.SEEK_CUR)
                 return ''.join(lines).rstrip()
 
-    def _is_continuation_line(self, line):
+    def is_continuation_line(self, line):
         return line and not (line.startswith('20') and line[23:24] == ' ')
 
 
@@ -293,22 +293,35 @@ class LogReader(Thread):
         file_size = os.fstat(self._file.fileno()).st_size
         chunk_count = (file_size // chunk_size) + bool(file_size % chunk_size)
 
+        chunk = ''
         newline_count = 0
+        previous_newline_position = None
 
-        for chunk_index in reversed(range(chunk_count)):
+        for iteration, chunk_index in enumerate(reversed(range(chunk_count))):
             self._file.seek(chunk_size * chunk_index)
-            chunk = self._file.read(chunk_size)
+            line_tail = chunk[:previous_newline_position]
+            chunk = self._file.read(chunk_size) + line_tail
 
-            current_newline_position = chunk.rfind('\n')
+            if iteration == 0:
+                previous_newline_position = chunk.rfind('\n')
+            else:
+                previous_newline_position = None
+
+            current_newline_position = chunk.rfind('\n', 0, previous_newline_position)
+
             while current_newline_position != -1:
-                if newline_count == self.tail:
-                    self._file.seek(current_newline_position + 1)
-                    return
-                else:
-                    newline_count += 1
-                    current_newline_position = chunk.rfind('\n', 0, current_newline_position)
+                line = chunk[current_newline_position + 1 : previous_newline_position]
 
-        self._file.seek(0)
+                if not self.parser.is_continuation_line(line):
+                    newline_count += 1
+                    if newline_count >= self.tail:
+                        self._file.seek(chunk_index * chunk_size + current_newline_position + 1)
+                        return    
+
+                previous_newline_position = current_newline_position
+                current_newline_position = chunk.rfind('\n', 0, previous_newline_position)
+        else:
+            self._file.seek(0)
 
     def _seek_time(self, fd, ts):
         """try to seek to our start time"""

@@ -243,44 +243,53 @@ class LogReaderTests(TestCase):
         self.write_log_file('XXXX\n' * 100)
         self.write_sincedb_file('log.log 23 50 75')
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db')
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 50)
             self.assertEqual(reader._fid, 23)
 
     def test_seek_sincedb_position_no_sincedb(self):
-        self.write_log_file('XXXX\n' * 100)
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', sincedb='since.db', tail=10)
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db', tail=10)
             reader._file = f
             reader._seek_position()
-            self.assertEqual(f.tell(), 450)
+            self.assertEqual(f.tell(), 10 * 75)
             self.assertEqual(self.fake_logging.warnings, ['Failed to read the sincedb file for "log.log".'])
 
     def test_seek_tail_not_enough_lines(self):
-        self.write_log_file('XXXX\n' * 10)
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 10)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', tail=100)
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=20)
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 0)
 
     def test_seek_tail_one_chunk(self):
-        self.write_log_file('XXXX\n' * 100)
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', tail=10)
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=10)
             reader._file = f
             reader._seek_position()
-            self.assertEqual(f.tell(), 450)
+            self.assertEqual(f.tell(), 10 * 75)
 
-    def test_seek_tail_multiple_chunk(self):
-        self.write_log_file('XXXX\n' * 1000)
+    def test_seek_tail_multiple_chunks(self):
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 1000)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', 'DUMMY PARSER', 'DUMMY RECEIVER', tail=900)
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=900)
             reader._file = f
             reader._seek_position()
-            self.assertEqual(f.tell(), 500)
+            self.assertEqual(f.tell(), 100 * 75)
+
+    def test_seek_tail_with_multiline_messages_one_chunk(self):
+        message = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' + 'X' * 24 + '\n'
+        self.write_log_file(message * 10)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=5)
+            reader._file = f
+            reader._seek_position()
+            self.assertEqual(f.tell(), 5 * 100)
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
