@@ -399,6 +399,18 @@ class LogReaderTests(TestCase):
         reader._ensure_file_is_good(1000)
         self.assertEqual(self.fake_logging.infos, ['The file no.such.file has been removed.'])
 
+    def test_ensure_file_is_good_file_has_been_rotated(self):
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+            reader._file = f
+            reader._file_device_and_inode_string = 'not matching'
+            reader._ensure_file_is_good(1000)
+            self.assertTrue(f.closed)
+            self.assertNotEqual(reader._file, f)
+            self.assertFalse(reader._file.closed)
+            self.assertEqual(reader._file.readline(), 'Some file contents!')
+
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:

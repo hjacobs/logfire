@@ -232,15 +232,21 @@ class LogReader(Thread):
             st = os.stat(self._filename)
         except OSError, e:
             logging.info('The file %s has been removed.', self._filename)
-            return
+            return False
 
-        device_and_inode_string = self._file_device_and_inode_string(st)
-        cur_pos = self._file.tell()
-        if device_and_inode_string != self._file_device_and_inode_string:
-            logging.info('file "%s" rotated', self._filename)
+
+        expected_device_and_inode_string = self._file_device_and_inode_string
+        actual_device_and_inode_string = self.get_device_and_inode_string(st)
+
+        if expected_device_and_inode_string != actual_device_and_inode_string:
+            logging.info('The file %s has been rotated.', self._filename)
             self._update_file(seek_to_end=False)
             return False
-        elif cur_pos > st.st_size:
+
+
+        cur_pos = self._file.tell()
+
+        if cur_pos > st.st_size:
             if st.st_size == 0 and self._ignore_truncate:
                 logging.info('[{0}] - file size is 0 {1}. '.format(device_and_inode_string, self._filename)
                              + 'If you use another tool (i.e. logrotate) to truncate '
