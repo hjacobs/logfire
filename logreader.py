@@ -174,7 +174,7 @@ class LogReader(Thread):
                 if self._ensure_file_is_good(time.time()):
                     self._file.seek(where)
 
-    def open(self, encoding=None):
+    def open(self):
         """Opens the file with the appropriate call"""
 
         logging.info('Opening %s..', self._filename)
