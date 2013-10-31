@@ -186,9 +186,6 @@ class LogReader(Thread):
         except IOError:
             logging.exception('Failed to open %s', self._filename)
             raise
-            # logging.warn(str(e))
-            # _file = None
-            # self.close()
         self._first = True
 
         return _file
