@@ -392,6 +392,14 @@ class LogReaderTests(TestCase):
         self.assertTrue(f.closed)
         self.assertEqual(reader._file, None)
 
+    ### tests for _ensure_file_is_good() ###
+
+    def test_ensure_file_is_good_file_does_not_exist(self):
+        reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
+        reader._ensure_file_is_good(1000)
+        self.assertEqual(self.fake_logging.infos, ['The file no.such.file has been removed.'])
+
+
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
             f.write('\n'.join(lines))

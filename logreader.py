@@ -230,10 +230,9 @@ class LogReader(Thread):
 
         try:
             st = os.stat(self._filename)
-        except EnvironmentError, err:
-            if err.errno == errno.ENOENT:
-                logging.info('file removed')
-                return
+        except OSError, e:
+            logging.info('The file %s has been removed.', self._filename)
+            return
 
         device_and_inode_string = self._file_device_and_inode_string(st)
         cur_pos = self._file.tell()
