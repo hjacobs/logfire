@@ -1,8 +1,10 @@
 from StringIO import StringIO
 from unittest import TestCase
 
+import gzip
 import logging
 import os
+import sys
 
 import logfire
 import logreader
@@ -348,8 +350,35 @@ class LogReaderTests(TestCase):
             reader._seek_time('2000-01-01 00:01:30,000')
             self.assertEqual(reader._file.tell(), 60 * 200)
 
+    ### tests for open() ###
 
-    # TEST FIRST AND LAST LINE MATCHES
+    def test_open_regular_file(self):
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        f = reader.open()
+        try:
+            self.assertEqual(f.name, 'log.log')
+            self.assertFalse(f.closed)
+            self.assertEqual(f.read(), 'Some file contents!')
+        finally:
+            f.close()
+
+    def test_open_gzip_file(self):
+        with gzip.open('log.gz', 'wb') as f:
+            f.write('Some file contents!')
+        reader = LogReader(0, 'log.gz', Log4jParser(), 'DUMMY RECEIVER')
+        f = reader.open()
+        try:
+            self.assertEqual(f.name, 'log.gz')
+            self.assertFalse(f.closed)
+            self.assertEqual(f.read(), 'Some file contents!')
+        finally:
+            f.close()
+
+    def test_open_nonexistent_file(self):
+        reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
+        self.assertRaises(IOError, reader.open)
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
@@ -408,6 +437,9 @@ class FakeLogging(object):
     def warning(self, msg, *args, **kwargs):
         self.warnings.append(self.format_message(msg, args))
 
+    def exception(self, msg, *args, **kwargs):
+        self.exceptions.append((self.format_message(msg, args), sys.exc_info()))
+
     @classmethod
     def format_message(cls, msg, args):
         if len(args) == 1 and isinstance(args[0], dict):
@@ -418,3 +450,4 @@ class FakeLogging(object):
         self.debugs = []
         self.infos = []
         self.warnings = []
+        self.exceptions = []
