@@ -5,7 +5,9 @@ import logging
 import os
 
 import logfire
-from logfire import Log4jParser, LogLevel, LogReader
+import logreader
+from logfire import Log4jParser, LogLevel
+from logreader import LogReader
 
 
 class Log4jParserTests(TestCase):
@@ -225,7 +227,7 @@ class LogReaderTests(TestCase):
         cls.fake_logging = FakeLogging()
 
     def setUp(self):
-        logfire.logging = self.fake_logging
+        logreader.logging = self.fake_logging
 
     def tearDown(self):
         logfire.logfire = logging
