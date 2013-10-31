@@ -196,6 +196,7 @@ class LogReader(Thread):
 
         if self._file:
             self._file.close()
+            self._file = None
 
     @staticmethod
     def get_file_id(st):
