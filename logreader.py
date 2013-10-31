@@ -194,7 +194,6 @@ class LogReader(Thread):
     def _close_file(self):
         """Closes all currently open file pointers"""
 
-        self.active = False
         if self._file:
             self._file.close()
 
