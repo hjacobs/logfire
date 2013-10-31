@@ -291,6 +291,64 @@ class LogReaderTests(TestCase):
             reader._seek_position()
             self.assertEqual(f.tell(), 5 * 100)
 
+    def test_seek_time_in_empty_file(self):
+        with prepared_reader(seconds=()) as reader:
+            reader._seek_time('2000-01-01 00:00:00,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_one_chunk_exact_match(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:05,000')
+            self.assertEqual(reader._file.tell(), 5 * 75)
+
+    def test_seek_time_one_chunk_first_line_exact_match(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:00,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_one_chunk_last_line_exact_match(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:09,000')
+            self.assertEqual(reader._file.tell(), 9 * 75)
+
+    def test_seek_time_one_chunk_between_lines(self):
+        with prepared_reader(seconds=range(0, 20, 2)) as reader:
+            reader._seek_time('2000-01-01 00:00:15,000')
+            self.assertEqual(reader._file.tell(), 8 * 75)
+
+    def test_seek_time_one_chunk_before_file(self):
+        with prepared_reader(seconds=range(10, 20)) as reader:
+            reader._seek_time('2000-01-01 00:00:05,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_one_chunk_after_file(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:12,000')
+            self.assertEqual(reader._file.tell(), 10 * 75)
+
+    def test_seek_time_continuation_lines_excact_match(self):
+        with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:00:30,000')
+            self.assertEqual(reader._file.tell(), 30 * 200)
+
+    def test_seek_time_continuation_lines_between_lines(self):
+        with prepared_reader(seconds=range(0, 60, 2), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:00:31,000')
+            self.assertEqual(reader._file.tell(), 16 * 200)
+
+    def test_seek_time_continuation_lines_before_file(self):
+        with prepared_reader(seconds=range(60, 120), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:00:30,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_continuation_lines_after_file(self):
+        with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:01:30,000')
+            self.assertEqual(reader._file.tell(), 60 * 200)
+
+
+    # TEST FIRST AND LAST LINE MATCHES
+
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
             f.write('\n'.join(lines))
@@ -298,6 +356,35 @@ class LogReaderTests(TestCase):
     def write_sincedb_file(self, contents):
         with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'wb') as f:
             f.write(contents)
+
+
+
+class prepared_reader(object):
+
+    DEFAULT_MESSAGE = '2000-01-01 00:%02d:%02d,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n'
+    DEFAULT_CONTINUATION_LINE = ('X' * 24) + '\n'
+
+    def __init__(self, seconds, message_template=None, continuation_line=None, continuation_line_count=0):
+        self.seconds = seconds
+        self.message_template = message_template or self.DEFAULT_MESSAGE
+        self.message_template += (continuation_line or self.DEFAULT_CONTINUATION_LINE) * continuation_line_count
+
+    def __enter__(self):
+        lines = []
+        for i in self.seconds:
+            lines.append(self.message_template % divmod(i, 60))
+        with open('log.log', 'wb') as f:
+            f.write(''.join(lines))
+        self.log = open('log.log', 'rb')
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        reader._file = self.log
+        return reader
+
+    def __exit__(self, *args):
+        self.log.close()
+
+
+
 
 
 

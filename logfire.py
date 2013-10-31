@@ -176,6 +176,12 @@ class Log4jParser(object):
                 )
             i += 1
 
+    def get_time_string(self, line):
+        if self.is_continuation_line(line):
+            raise Exception('Continuation lines do not have time strings.')
+        else:
+            return line[:23]
+
     def _read_log_level(self, columns, index):
         return LogLevel.FROM_FIRST_LETTER.get(columns[index].lstrip('[')[:1], LogLevel.FATAL)
 
@@ -323,41 +329,52 @@ class LogReader(Thread):
         else:
             self._file.seek(0)
 
-    def _seek_time(self, fd, ts):
+    def _seek_time(self, time_string):
         """try to seek to our start time"""
 
-        s = os.path.getsize(self._filename)
-        fd.seek(0)
+        def binary_chunk_search(start_index, stop_index):
+            if start_index + 1 == stop_index:
+                return start_index
+            else:
+                pivot_index = (start_index + stop_index) // 2
+                if get_first_timestamp_in_chunk(pivot_index) > time_string:
+                    return binary_chunk_search(start_index, pivot_index)
+                else:
+                    return binary_chunk_search(pivot_index, stop_index)
 
-        if s < 8192:
-            # file is too small => we do not need to seek around
-            return
+        def get_first_timestamp_in_chunk(chunk_index):
+            self._file.seek(chunk_size * chunk_index)
+            line = self._file.readline()
+            while line and self.parser.is_continuation_line(line):
+                line = self._file.readline()
+            if line and line[-1] == '\n':
+                return self.parser.get_time_string(line)
+            else:
+                return 'greater than any time string'
 
-        file_start = None
-        for entry in self.parser.read(0, fd):
-            file_start = entry.ts
-            break
+        def seek_time_in_chunk(chunk_index):
+            self._file.seek(chunk_index * chunk_size)
 
-        fd.seek(-1024, 2)
-        file_end = None
-        for entry in self.parser.read(0, fd):
-            file_end = entry.ts
-            break
+            while True:
+                line = self._file.readline()
+                if line and line[-1] == '\n':
+                    if self.parser.is_continuation_line(line):
+                        continue
+                    else:
+                        if self.parser.get_time_string(line) >= time_string:
+                            self._file.seek(-len(line), os.SEEK_CUR)
+                            return
+                else:
+                    self._file.seek(0, os.SEEK_END)
+                    return
 
-        if not file_start or not file_end:
-            fd.seek(0)
-            return
+        chunk_size = 1024
+        file_size = os.fstat(self._file.fileno()).st_size
+        chunk_count = (file_size // chunk_size) + bool(file_size % chunk_size)
 
-        start = parse_timestamp(file_start)
-        t = parse_timestamp(ts)
-        end = parse_timestamp(file_end)
+        target_chunk_index = binary_chunk_search(0, chunk_count + 1)
+        seek_time_in_chunk(target_chunk_index)
 
-        if end - start <= 0:
-            fd.seek(0)
-            return
-
-        ratio = max(0, (t - start) / (end - start) - 0.2)
-        fd.seek(s * ratio)
 
     def run(self):
         fid = self.fid
@@ -367,7 +384,7 @@ class LogReader(Thread):
         self.parser.autoconfigure(self._file)
         self._update_file()
         if filt.time_from:
-            self._seek_time(self._file, filt.time_from)
+            self._seek_time(filt.time_from)
         while True:
             where = self._file.tell()
             had_entry = False
@@ -763,8 +780,6 @@ def main():
     parser.add_argument('--redis-port', type=int, default=6379, help='redis port')
     parser.add_argument('--redis-namespace', help='redis namespace')
     parser.add_argument('--sincedb', help='sincedb path')
-
-    args = parser.parse_args()
 
     logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO), format=LOG_FORMAT)
 
