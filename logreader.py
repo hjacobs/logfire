@@ -244,27 +244,24 @@ class LogReader(Thread):
             return False
 
 
-        cur_pos = self._file.tell()
+        current_position = self._file.tell()
+        file_size = st.st_size
 
-        if cur_pos > st.st_size:
-            if st.st_size == 0 and self._ignore_truncate:
-                logging.info('[{0}] - file size is 0 {1}. '.format(device_and_inode_string, self._filename)
-                             + 'If you use another tool (i.e. logrotate) to truncate '
-                             + 'the file, your application may continue to write to '
-                             + "the offset it last wrote later. In such a case, we'd " + 'better do nothing here')
-                return
-            logging.info('file "%s" truncated', self._filename)
-            self._update_file(seek_to_end=False)
+        if current_position > file_size:
+            logging.info('The file %s has been truncated.', self._filename)
+            self._file.seek(0)
             return False
+
+
         if self._sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
                                    > self._sincedb_write_interval):
             self._last_sincedb_write = current_time
             path = self._sincedb()
-            logging.debug('Writing sincedb for %s: %s of %s (%s Bytes to go)', self._filename, cur_pos, st.st_size,
-                          st.st_size - cur_pos)
+            logging.debug('Writing sincedb for %s: %s of %s (%s Bytes to go)', self._filename, current_position,
+                          file_size, file_size - current_position)
             try:
                 with open(path, 'wb') as fd:
-                    fd.write(' '.join((self._filename, self._file_device_and_inode_string, str(cur_pos), str(st.st_size))))
+                    fd.write(' '.join((self._filename, self._file_device_and_inode_string, str(current_position), str(file_size))))
             except:
                 logging.exception('Failed to write to %s', path)
         return True

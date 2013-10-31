@@ -411,6 +411,18 @@ class LogReaderTests(TestCase):
             self.assertFalse(reader._file.closed)
             self.assertEqual(reader._file.readline(), 'Some file contents!')
 
+    def test_ensure_file_is_good_file_has_been_truncated(self):
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+            reader._file = f
+            reader._file_device_and_inode_string = reader.get_device_and_inode_string(os.fstat(f.fileno()))
+            f.truncate(0) 
+            reader._ensure_file_is_good(1000)
+            self.assertFalse(f.closed)
+            self.assertEqual(reader._file, f)
+            self.assertEqual(f.tell(), 0)
+
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
