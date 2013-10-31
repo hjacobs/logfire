@@ -356,29 +356,29 @@ class LogReaderTests(TestCase):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
-        f = reader.open()
+        f = reader._open_file()
         try:
-            self.assertEqual(f.name, 'log.log')
-            self.assertFalse(f.closed)
-            self.assertEqual(f.read(), 'Some file contents!')
+            self.assertEqual(reader._file.name, 'log.log')
+            self.assertFalse(reader._file.closed)
+            self.assertEqual(reader._file.read(), 'Some file contents!')
         finally:
-            f.close()
+            reader._file.close()
 
     def test_open_gzip_file(self):
         with gzip.open('log.gz', 'wb') as f:
             f.write('Some file contents!')
         reader = LogReader(0, 'log.gz', Log4jParser(), 'DUMMY RECEIVER')
-        f = reader.open()
+        reader._open_file()
         try:
-            self.assertEqual(f.name, 'log.gz')
-            self.assertFalse(f.closed)
-            self.assertEqual(f.read(), 'Some file contents!')
+            self.assertEqual(reader._file.name, 'log.gz')
+            self.assertFalse(reader._file.closed)
+            self.assertEqual(reader._file.read(), 'Some file contents!')
         finally:
-            f.close()
+            reader._file.close()
 
     def test_open_nonexistent_file(self):
         reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
-        self.assertRaises(IOError, reader.open)
+        self.assertRaises(IOError, reader._open_file)
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:

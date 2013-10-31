@@ -174,21 +174,22 @@ class LogReader(Thread):
                 if self._ensure_file_is_good(time.time()):
                     self._file.seek(where)
 
-    def open(self):
-        """Opens the file with the appropriate call"""
+    def _open_file(self):
+        """
+        Opens the file the LogReader is responsible for and assigns it to _file. If that file has the extension ".gz",
+        it is opened as a gzip file. Errors are propagated.
+        """
 
-        logging.info('Opening %s..', self._filename)
         try:
             if self._filename.endswith('.gz'):
-                _file = gzip.open(self._filename, 'rb')
+                self._file = gzip.open(self._filename, 'rb')
             else:
-                _file = io.open(self._filename, 'rb')
+                self._file = io.open(self._filename, 'rb')
+            logging.info('Opened %s.', self._filename)
         except IOError:
-            logging.exception('Failed to open %s', self._filename)
+            logging.exception('Failed to open %s.', self._filename)
             raise
         self._first = True
-
-        return _file
 
     @staticmethod
     def get_file_id(st):
@@ -199,7 +200,7 @@ class LogReader(Thread):
 
         try:
             self.close()
-            self._file = self.open()
+            self._open_file()
         except IOError:
             raise
         try:
