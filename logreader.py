@@ -1,5 +1,9 @@
+import errno
+import gzip
 import hashlib
+import io
 import logging
+import time
 import os
 
 from threading import Thread
@@ -139,7 +143,6 @@ class LogReader(Thread):
 
         target_chunk_index = binary_chunk_search(0, chunk_count + 1)
         seek_time_in_chunk(target_chunk_index)
-
 
     def run(self):
         fid = self.fid

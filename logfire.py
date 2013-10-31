@@ -2,10 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import collections
-import errno
-import gzip
 import heapq
-import io
 import json
 import logging
 import os
@@ -499,6 +496,8 @@ def main():
     parser.add_argument('--redis-port', type=int, default=6379, help='redis port')
     parser.add_argument('--redis-namespace', help='redis namespace')
     parser.add_argument('--sincedb', help='sincedb path')
+
+    args = parser.parse_args()
 
     logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO), format=LOG_FORMAT)
 
