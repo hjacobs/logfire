@@ -206,11 +206,8 @@ class LogReader(Thread):
     def _update_file(self, seek_to_end=True):
         """Open the file for tailing"""
 
-        try:
-            self._close_file()
-            self._open_file()
-        except IOError:
-            raise
+        self._close_file()
+        self._open_file()
         try:
             st = os.stat(self._filename)
         except EnvironmentError, err:
