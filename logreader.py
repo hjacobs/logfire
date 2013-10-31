@@ -191,6 +191,13 @@ class LogReader(Thread):
             raise
         self._first = True
 
+    def _close_file(self):
+        """Closes all currently open file pointers"""
+
+        self.active = False
+        if self._file:
+            self._file.close()
+
     @staticmethod
     def get_file_id(st):
         return '%xg%x' % (st.st_dev, st.st_ino)
@@ -199,7 +206,7 @@ class LogReader(Thread):
         """Open the file for tailing"""
 
         try:
-            self.close()
+            self._close_file()
             self._open_file()
         except IOError:
             raise
@@ -208,17 +215,10 @@ class LogReader(Thread):
         except EnvironmentError, err:
             if err.errno == errno.ENOENT:
                 logging.info('file removed')
-                self.close()
+                self._close_file()
         self._fid = self.get_file_id(st)
         if seek_to_end and self.tail:
             self._seek_position()
-
-    def close(self):
-        """Closes all currently open file pointers"""
-
-        self.active = False
-        if self._file:
-            self._file.close()
 
     def _sincedb(self):
         return '{}f{}'.format(self._sincedb_path, self._fhash)
