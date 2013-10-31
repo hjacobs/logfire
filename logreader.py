@@ -163,14 +163,14 @@ class LogReader(Thread):
                     # print entry.ts
                     receiver.add(entry)
                 # print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
-                self._ensure_file_is_good(time.time())
+                self._do_housekeeping(time.time())
                 had_entry = True
             if not self.follow:
                 receiver.eof(fid)
                 break
             if not had_entry:
                 time.sleep(0.1)
-                if self._ensure_file_is_good(time.time()):
+                if self._do_housekeeping(time.time()):
                     self._file.seek(where)
 
     def _open_file(self):
@@ -220,14 +220,23 @@ class LogReader(Thread):
     def _sincedb(self):
         return '{}f{}'.format(self._sincedb_path, self._fhash)
 
+    def _do_housekeeping(self, current_time):
+        if self._last_file_mapping_update and current_time - self._last_file_mapping_update <= self._stat_interval:
+            result = True
+        else:
+            self._last_file_mapping_update = current_time
+            result = _ensure_file_is_good(current_time)
+
+        if self._sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
+                                   > self._sincedb_write_interval):
+            self._last_sincedb_write = current_time
+            _save_progress(current_time)
+
+        return result
+
     def _ensure_file_is_good(self, current_time):
         """Every N seconds, ensures that the file we are tailing is the file we expect to be tailing"""
-
-        if self._last_file_mapping_update and current_time - self._last_file_mapping_update <= self._stat_interval:
-            return True
-
-        self._last_file_mapping_update = current_time
-
+        
         try:
             st = os.stat(self._filename)
         except OSError, e:
@@ -252,19 +261,19 @@ class LogReader(Thread):
             self._file.seek(0)
             return False
 
-
-        if self._sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
-                                   > self._sincedb_write_interval):
-            self._last_sincedb_write = current_time
-            path = self._sincedb()
-            logging.debug('Writing sincedb for %s: %s of %s (%s Bytes to go)', self._filename, current_position,
-                          file_size, file_size - current_position)
-            try:
-                with open(path, 'wb') as fd:
-                    fd.write(' '.join((self._filename, self._file_device_and_inode_string, str(current_position), str(file_size))))
-            except:
-                logging.exception('Failed to write to %s', path)
         return True
+
+    def _save_progress(self, current_time):
+        path = self._sincedb()
+        current_position = self._file.tell()
+        file_size = st.st_size
+        logging.debug('Writing sincedb for %s: %s of %s (%s Bytes to go)', self._filename, current_position,
+                      file_size, file_size - current_position)
+        try:
+            with open(path, 'wb') as fd:
+                fd.write(' '.join((self._filename, self._file_device_and_inode_string, str(current_position), str(file_size))))
+        except:
+            logging.exception('Failed to write to %s', path)
 
 
 class LogFilter(object):
