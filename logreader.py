@@ -192,7 +192,7 @@ class LogReader(Thread):
         self._first = True
 
     def _close_file(self):
-        """Closes all currently open file pointers"""
+        """Closes the file the LogReader is responsible for and sets _file to None."""
 
         if self._file:
             self._file.close()
