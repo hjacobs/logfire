@@ -245,13 +245,13 @@ class LogReaderTests(TestCase):
 
     def test_seek_sincedb_position(self):
         self.write_log_file('XXXX\n' * 100)
-        self.write_sincedb_file('log.log 23 50 75')
+        self.write_sincedb_file('log.log 123g456 50 75')
         with open('log.log', 'rb') as f:
             reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 50)
-            self.assertEqual(reader._fid, 23)
+            self.assertEqual(reader._file_device_and_inode_string, '123g456')
 
     def test_seek_sincedb_position_no_sincedb(self):
         self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
@@ -380,7 +380,7 @@ class LogReaderTests(TestCase):
         reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
         self.assertRaises(IOError, reader._open_file)
 
-    # tests for _close_file() ###
+    ### tests for _close_file() ###
 
     def test_close_file(self):
         with open('log.log', 'wb') as f:
@@ -391,7 +391,6 @@ class LogReaderTests(TestCase):
         reader._close_file()
         self.assertTrue(f.closed)
         self.assertEqual(reader._file, None)
-
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:

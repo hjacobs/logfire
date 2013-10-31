@@ -35,7 +35,7 @@ class LogReader(Thread):
         self._last_file_mapping_update = None
         self._stat_interval = 2
         self._sincedb_write_interval = 5
-        self._fid = None
+        self._file_device_and_inode_string = None
         self._file = None
         self._first = False
         self._sincedb_path = sincedb
@@ -49,15 +49,14 @@ class LogReader(Thread):
         if self._sincedb_path:
             try:
                 with open(self._sincedb()) as sincedb_file:
-                    _, fid, last_position, _ = sincedb_file.read().split()
+                    _, device_and_inode_string, last_position, _ = sincedb_file.read().split()
                 last_position = int(last_position)
-                fid = int(fid)
             except Exception:
                 logging.warning('Failed to read the sincedb file for "%s".', self._filename)
                 return False
             else:
                 logging.info('Resumed reading "%s" at offset %d.', self._filename, last_position)
-                self._fid = fid
+                self._file_device_and_inode_string = device_and_inode_string
                 self._file.seek(last_position)
                 return True
         else:
@@ -200,7 +199,7 @@ class LogReader(Thread):
             logging.info('Closed %s.' % self._filename)
 
     @staticmethod
-    def get_file_id(st):
+    def get_device_and_inode_string(st):
         return '%xg%x' % (st.st_dev, st.st_ino)
 
     def _update_file(self, seek_to_end=True):
@@ -214,7 +213,7 @@ class LogReader(Thread):
             if err.errno == errno.ENOENT:
                 logging.info('file removed')
                 self._close_file()
-        self._fid = self.get_file_id(st)
+        self._file_device_and_inode_string = self.get_device_and_inode_string(st)
         if seek_to_end and self.tail:
             self._seek_position()
 
@@ -236,15 +235,15 @@ class LogReader(Thread):
                 logging.info('file removed')
                 return
 
-        fid = self.get_file_id(st)
+        device_and_inode_string = self._file_device_and_inode_string(st)
         cur_pos = self._file.tell()
-        if fid != self._fid:
+        if device_and_inode_string != self._file_device_and_inode_string:
             logging.info('file "%s" rotated', self._filename)
             self._update_file(seek_to_end=False)
             return False
         elif cur_pos > st.st_size:
             if st.st_size == 0 and self._ignore_truncate:
-                logging.info('[{0}] - file size is 0 {1}. '.format(fid, self._filename)
+                logging.info('[{0}] - file size is 0 {1}. '.format(device_and_inode_string, self._filename)
                              + 'If you use another tool (i.e. logrotate) to truncate '
                              + 'the file, your application may continue to write to '
                              + "the offset it last wrote later. In such a case, we'd " + 'better do nothing here')
@@ -260,7 +259,7 @@ class LogReader(Thread):
                           st.st_size - cur_pos)
             try:
                 with open(path, 'wb') as fd:
-                    fd.write(' '.join((self._filename, self._fid, str(cur_pos), str(st.st_size))))
+                    fd.write(' '.join((self._filename, self._file_device_and_inode_string, str(cur_pos), str(st.st_size))))
             except:
                 logging.exception('Failed to write to %s', path)
         return True
