@@ -350,13 +350,13 @@ class LogReaderTests(TestCase):
             reader._seek_time('2000-01-01 00:01:30,000')
             self.assertEqual(reader._file.tell(), 60 * 200)
 
-    ### tests for open() ###
+    ### tests for _open_file() ###
 
     def test_open_regular_file(self):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
-        f = reader._open_file()
+        reader._open_file()
         try:
             self.assertEqual(reader._file.name, 'log.log')
             self.assertFalse(reader._file.closed)
@@ -379,6 +379,19 @@ class LogReaderTests(TestCase):
     def test_open_nonexistent_file(self):
         reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
         self.assertRaises(IOError, reader._open_file)
+
+    # tests for _close_file() ###
+
+    def test_close_file(self):
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        reader._open_file()
+        f = reader._file
+        reader._close_file()
+        self.assertTrue(f.closed)
+        self.assertEqual(reader._file, None)
+
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
