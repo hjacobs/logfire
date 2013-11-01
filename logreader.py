@@ -31,14 +31,15 @@ class LogReader(Thread):
         self.tail = tail
         self.follow = follow
         self.filterdef = filterdef or LogFilter()
-        self._last_file_mapping_update = 0
-        self._stat_interval = 2
-        self._sincedb_write_interval = 5
         self._file_device_and_inode_string = None
         self._file = None
         self._first = False
         self._sincedb_path = sincedb
-        self._last_sincedb_write = 0
+
+        self._ensure_file_is_good_call_interval = 2  # seconds
+        self._last_ensure_file_is_good_call_timestamp = 0
+        self._save_progress_call_interval = 5  # seconds
+        self._last_save_progress_call_timestamp = 0
 
         if sincedb:
             self._full_sincedb_path = '{0}f{1}'.format(sincedb, hashlib.sha1(fname).hexdigest())
@@ -217,14 +218,15 @@ class LogReader(Thread):
 
     ### HOUSEKEEPING ###
 
-    def _do_housekeeping(self, current_time):
-        if current_time - self._last_file_mapping_update > self._stat_interval:
-            self._last_file_mapping_update = current_time
+    def _do_housekeeping(self, current_timestamp):
+        if current_timestamp - self._last_ensure_file_is_good_call_timestamp > self._ensure_file_is_good_call_interval:
+            self._last_ensure_file_is_good_call_timestamp = current_timestamp
             self._ensure_file_is_good()
 
-        if self._full_sincedb_path and current_time - self._last_sincedb_write > self._sincedb_write_interval:
-            self._last_sincedb_write = current_time
-            self._save_progress()
+        if self._full_sincedb_path:
+            if current_timestamp - self._last_save_progress_call_timestamp > self._save_progress_call_interval:
+                self._last_save_progress_call_timestamp = current_timestamp
+                self._save_progress()
 
     def _ensure_file_is_good(self):
         """

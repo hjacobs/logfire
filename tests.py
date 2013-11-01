@@ -400,32 +400,32 @@ class LogReaderTests(TestCase):
         reader._save_progress = lambda: called.append('_save_progress')
         reader._do_housekeeping(23)
         self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
-        self.assertEqual(reader._last_file_mapping_update, 23)
-        self.assertEqual(reader._last_sincedb_write, 23)
+        self.assertEqual(reader._last_ensure_file_is_good_call_timestamp, 23)
+        self.assertEqual(reader._last_save_progress_call_timestamp, 23)
 
     def test_do_housekeeping_second_time_too_early(self):
         called = []
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
-        reader._last_file_mapping_update = 23
-        reader._last_sincedb_write = 23
+        reader._last_ensure_file_is_good_call_timestamp = 23
+        reader._last_save_progress_call_timestamp = 23
         reader._do_housekeeping(24)
         self.assertEqual(called, [])
-        self.assertEqual(reader._last_file_mapping_update, 23)
-        self.assertEqual(reader._last_sincedb_write, 23)
+        self.assertEqual(reader._last_ensure_file_is_good_call_timestamp, 23)
+        self.assertEqual(reader._last_save_progress_call_timestamp, 23)
 
     def test_do_housekeeping_second_time_late_enough(self):
         called = []
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
-        reader._last_file_mapping_update = 23
-        reader._last_sincedb_write = 23
+        reader._last_ensure_file_is_good_call_timestamp = 23
+        reader._last_save_progress_call_timestamp = 23
         reader._do_housekeeping(42)
         self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
-        self.assertEqual(reader._last_file_mapping_update, 42)
-        self.assertEqual(reader._last_sincedb_write, 42)
+        self.assertEqual(reader._last_ensure_file_is_good_call_timestamp, 42)
+        self.assertEqual(reader._last_save_progress_call_timestamp, 42)
        
     ### tests for _ensure_file_is_good() ###
 
