@@ -242,6 +242,10 @@ class LogReaderTests(TestCase):
             os.remove('log.log')
         except OSError:
             pass
+        try:
+            os.remove('log.gz')
+        except OSError:
+            pass
 
     def test_seek_sincedb_position(self):
         self.write_log_file('XXXX\n' * 100)
@@ -392,11 +396,23 @@ class LogReaderTests(TestCase):
         self.assertTrue(f.closed)
         self.assertEqual(reader._file, None)
 
+    ### tests for _do_housekeeping() ###
+
+    def test_do_housekeeping_calls_housekeeping_functions(self):
+        called = []
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
+        reader._save_progress = lambda: called.append('_save_progress')
+        reader._do_housekeeping(23)
+        self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
+        self.assertEqual(reader._last_file_mapping_update, 23)
+        self.assertEqual(reader._last_sincedb_write, 23)
+
     ### tests for _ensure_file_is_good() ###
 
     def test_ensure_file_is_good_file_does_not_exist(self):
         reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
-        reader._ensure_file_is_good(1000)
+        reader._ensure_file_is_good()
         self.assertEqual(self.fake_logging.infos, ['The file no.such.file has been removed.'])
 
     def test_ensure_file_is_good_file_has_been_rotated(self):
@@ -405,7 +421,7 @@ class LogReaderTests(TestCase):
             reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
             reader._file = f
             reader._file_device_and_inode_string = 'not matching'
-            reader._ensure_file_is_good(1000)
+            reader._ensure_file_is_good()
             self.assertTrue(f.closed)
             self.assertNotEqual(reader._file, f)
             self.assertFalse(reader._file.closed)
@@ -418,10 +434,23 @@ class LogReaderTests(TestCase):
             reader._file = f
             reader._file_device_and_inode_string = reader.get_device_and_inode_string(os.fstat(f.fileno()))
             f.truncate(0) 
-            reader._ensure_file_is_good(1000)
+            reader._ensure_file_is_good()
             self.assertFalse(f.closed)
             self.assertEqual(reader._file, f)
             self.assertEqual(f.tell(), 0)
+
+    ### tests for _save_progress() ###
+
+    def test_save_progress(self):
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+            f.seek(10)
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+            reader._file = f
+            reader._file_device_and_inode_string = '123g456'
+            reader._save_progress()
+        with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'rb') as f:
+            self.assertEqual(f.read(), 'log.log 123g456 10 19')
 
 
     def write_log_file(self, *lines):

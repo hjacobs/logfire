@@ -225,16 +225,16 @@ class LogReader(Thread):
             result = True
         else:
             self._last_file_mapping_update = current_time
-            result = _ensure_file_is_good(current_time)
+            result = self._ensure_file_is_good()
 
         if self._sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
                                    > self._sincedb_write_interval):
             self._last_sincedb_write = current_time
-            _save_progress(current_time)
+            self._save_progress()
 
         return result
 
-    def _ensure_file_is_good(self, current_time):
+    def _ensure_file_is_good(self):
         """Every N seconds, ensures that the file we are tailing is the file we expect to be tailing"""
         
         try:
@@ -263,17 +263,18 @@ class LogReader(Thread):
 
         return True
 
-    def _save_progress(self, current_time):
+    def _save_progress(self):
         path = self._sincedb()
-        current_position = self._file.tell()
-        file_size = st.st_size
-        logging.debug('Writing sincedb for %s: %s of %s (%s Bytes to go)', self._filename, current_position,
-                      file_size, file_size - current_position)
         try:
-            with open(path, 'wb') as fd:
-                fd.write(' '.join((self._filename, self._file_device_and_inode_string, str(current_position), str(file_size))))
-        except:
-            logging.exception('Failed to write to %s', path)
+            current_position = self._file.tell()
+            file_size = os.fstat(self._file.fileno()).st_size
+            logging.debug('Writing sincedb for %s: at position %d of %d (%d bytes to go).', self._filename,
+                          current_position, file_size, file_size - current_position)
+            with open(path, 'wb') as sincedb_file:
+                line = '%s %s %d %d' % (self._filename, self._file_device_and_inode_string, current_position, file_size)
+                sincedb_file.write(line)
+        except Exception:
+            logging.exception('Failed to save progress for %s in %s.', self._filename, path)
 
 
 class LogFilter(object):
