@@ -26,7 +26,6 @@ class LogReader(Thread):
         Thread.__init__(self, name='LogReader-%d' % (fid, ))
         self.fid = fid
         self._filename = fname
-        self._fhash = hashlib.sha1(fname).hexdigest()
         self.parser = parser
         self.receiver = receiver
         self.tail = tail
@@ -41,14 +40,20 @@ class LogReader(Thread):
         self._sincedb_path = sincedb
         self._last_sincedb_write = None
 
+        if sincedb:
+            self._full_sincedb_path = '{0}f{1}'.format(sincedb, hashlib.sha1(fname).hexdigest())
+        else:
+            self._full_sincedb_path = None
+
+
     def _seek_position(self):
         """seek to start of "tail" (last n lines)"""
         self._seek_sincedb_position() or self._seek_tail()
 
     def _seek_sincedb_position(self):
-        if self._sincedb_path:
+        if self._full_sincedb_path:
             try:
-                with open(self._sincedb()) as sincedb_file:
+                with open(self._full_sincedb_path) as sincedb_file:
                     _, device_and_inode_string, last_position, _ = sincedb_file.read().split()
                 last_position = int(last_position)
             except Exception:
@@ -217,9 +222,6 @@ class LogReader(Thread):
         if seek_to_end and self.tail:
             self._seek_position()
 
-    def _sincedb(self):
-        return '{}f{}'.format(self._sincedb_path, self._fhash)
-
     def _do_housekeeping(self, current_time):
         if self._last_file_mapping_update and current_time - self._last_file_mapping_update <= self._stat_interval:
             result = True
@@ -227,8 +229,8 @@ class LogReader(Thread):
             self._last_file_mapping_update = current_time
             result = self._ensure_file_is_good()
 
-        if self._sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
-                                   > self._sincedb_write_interval):
+        if self._full_sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
+                                        > self._sincedb_write_interval):
             self._last_sincedb_write = current_time
             self._save_progress()
 
@@ -264,17 +266,22 @@ class LogReader(Thread):
         return True
 
     def _save_progress(self):
-        path = self._sincedb()
+        """
+        Saves the current file position to a file, so that the application can resume reading where it left off in case
+        it is terminated.
+        """
+
         try:
             current_position = self._file.tell()
             file_size = os.fstat(self._file.fileno()).st_size
             logging.debug('Writing sincedb for %s: at position %d of %d (%d bytes to go).', self._filename,
                           current_position, file_size, file_size - current_position)
-            with open(path, 'wb') as sincedb_file:
+            with open(self._full_sincedb_path, 'wb') as sincedb_file:
                 line = '%s %s %d %d' % (self._filename, self._file_device_and_inode_string, current_position, file_size)
                 sincedb_file.write(line)
         except Exception:
-            logging.exception('Failed to save progress for %s in %s.', self._filename, path)
+            logging.exception('Failed to save progress for %s in %s.', self._filename, self._full_sincedb_path)
+
 
 
 class LogFilter(object):
