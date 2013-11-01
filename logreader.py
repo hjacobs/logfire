@@ -53,9 +53,7 @@ class LogReader(Thread):
     def _seek_sincedb_position(self):
         if self._full_sincedb_path:
             try:
-                with open(self._full_sincedb_path) as sincedb_file:
-                    _, device_and_inode_string, last_position, _ = sincedb_file.read().split()
-                last_position = int(last_position)
+                _, device_and_inode_string, last_position, _ = self._load_progress()
             except Exception:
                 logging.warning('Failed to read the sincedb file for "%s".', self._filename)
                 return False
@@ -265,10 +263,12 @@ class LogReader(Thread):
 
         return True
 
+    ### PROGRESS ###
+
     def _save_progress(self):
         """
-        Saves the current file position to a file, so that the application can resume reading where it left off in case
-        it is terminated.
+        Saves the the reader's progress infotmation to a file, so that the application can resume reading where it
+        left off in case it is terminated.
         """
 
         progress = self._get_progress_string()
@@ -280,6 +280,14 @@ class LogReader(Thread):
             except Exception:
                 logging.exception('Failed to save progress for %s.', self._filename)
 
+    def _load_progress(self):
+        """
+        Loads the reader's progress information. Returns a tuple (filename, device_and_inode_string, position, size).
+        """
+
+        with open(self._full_sincedb_path, 'rb') as sincedb_file:
+            filename, device_and_inode_string, position, size = sincedb_file.read().rsplit(None, 3)
+            return filename, device_and_inode_string, int(position), int(size)
 
     def _get_progress_string(self):
         """Returns the sincedb string for the progress of the file the reader is responsible for."""

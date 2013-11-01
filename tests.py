@@ -461,6 +461,19 @@ class LogReaderTests(TestCase):
         self.assertFalse(os.path.exists('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'))
         self.assertEqual(self.fake_logging.exception_messages, ['Failed to save progress for log.log.'])
 
+    ### tests for _load_progress() ###
+
+    def test_load_progress_basic(self):
+        self.write_sincedb_file('log.log 123g456 50 75')
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        self.assertEqual(reader._load_progress(), ('log.log', '123g456', 50, 75))
+
+    def test_load_progress_with_spaces_in_filename(self):
+        with open('since.dbf4a53d67a02158bcc92d7d702a8f438ad18309488', 'wb') as f:
+            f.write('log with spaces in name.log 123g456 50 75')
+        reader = LogReader(0, 'log with spaces in name.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        self.assertEqual(reader._load_progress(), ('log with spaces in name.log', '123g456', 50, 75))
+
     ### tests for _get_progress_string() ###
 
     def test_get_progress_string_success(self):
