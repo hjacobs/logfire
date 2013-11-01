@@ -31,14 +31,14 @@ class LogReader(Thread):
         self.tail = tail
         self.follow = follow
         self.filterdef = filterdef or LogFilter()
-        self._last_file_mapping_update = None
+        self._last_file_mapping_update = 0
         self._stat_interval = 2
         self._sincedb_write_interval = 5
         self._file_device_and_inode_string = None
         self._file = None
         self._first = False
         self._sincedb_path = sincedb
-        self._last_sincedb_write = None
+        self._last_sincedb_write = 0
 
         if sincedb:
             self._full_sincedb_path = '{0}f{1}'.format(sincedb, hashlib.sha1(fname).hexdigest())
@@ -173,8 +173,8 @@ class LogReader(Thread):
                 break
             if not had_entry:
                 time.sleep(0.1)
-                if self._do_housekeeping(time.time()):
-                    self._file.seek(where)
+                self._file.seek(where)
+                self._do_housekeeping(time.time())
 
     def _open_file(self):
         """
@@ -223,18 +223,13 @@ class LogReader(Thread):
     ### HOUSEKEEPING ###
 
     def _do_housekeeping(self, current_time):
-        if self._last_file_mapping_update and current_time - self._last_file_mapping_update <= self._stat_interval:
-            result = True
-        else:
+        if current_time - self._last_file_mapping_update > self._stat_interval:
             self._last_file_mapping_update = current_time
-            result = self._ensure_file_is_good()
+            self._ensure_file_is_good()
 
-        if self._full_sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
-                                        > self._sincedb_write_interval):
+        if self._full_sincedb_path and current_time - self._last_sincedb_write > self._sincedb_write_interval:
             self._last_sincedb_write = current_time
             self._save_progress()
-
-        return result
 
     def _ensure_file_is_good(self):
         """
@@ -245,28 +240,21 @@ class LogReader(Thread):
         """
         
         try:
-            st = os.stat(self._filename)
+            stat_results = os.stat(self._filename)
         except OSError, e:
             logging.info('The file %s has been removed.', self._filename)
-            return False
+        else:
+            expected_device_and_inode_string = self._file_device_and_inode_string
+            actual_device_and_inode_string = self.get_device_and_inode_string(stat_results)
+            current_position = self._file.tell()
+            file_size = stat_results.st_size
 
-        expected_device_and_inode_string = self._file_device_and_inode_string
-        actual_device_and_inode_string = self.get_device_and_inode_string(st)
-
-        if expected_device_and_inode_string != actual_device_and_inode_string:
-            logging.info('The file %s has been rotated.', self._filename)
-            self._update_file(seek_to_end=False)
-            return False
-
-        current_position = self._file.tell()
-        file_size = st.st_size
-
-        if current_position > file_size:
-            logging.info('The file %s has been truncated.', self._filename)
-            self._file.seek(0)
-            return False
-
-        return True
+            if expected_device_and_inode_string != actual_device_and_inode_string:
+                logging.info('The file %s has been rotated.', self._filename)
+                self._update_file(seek_to_end=False)
+            elif current_position > file_size:
+                logging.info('The file %s has been truncated.', self._filename)
+                self._file.seek(0)
 
     ### PROGRESS ###
 

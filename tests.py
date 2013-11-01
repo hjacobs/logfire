@@ -421,6 +421,7 @@ class LogReaderTests(TestCase):
             self.assertNotEqual(reader._file, f)
             self.assertFalse(reader._file.closed)
             self.assertEqual(reader._file.readline(), 'Some file contents!')
+            self.assertEqual(self.fake_logging.infos[0], 'The file log.log has been rotated.')
 
     def test_ensure_file_is_good_file_has_been_truncated(self):
         with open('log.log', 'wb') as f:
@@ -433,6 +434,7 @@ class LogReaderTests(TestCase):
             self.assertFalse(f.closed)
             self.assertEqual(reader._file, f)
             self.assertEqual(f.tell(), 0)
+            self.assertEqual(self.fake_logging.infos, ['The file log.log has been truncated.'])
 
     def test_ensure_file_is_good_file_is_good(self):
         with open('log.log', 'wb') as f:
@@ -445,6 +447,7 @@ class LogReaderTests(TestCase):
             self.assertFalse(f.closed)
             self.assertEqual(reader._file, f)
             self.assertEqual(f.tell(), 10)
+            self.assertEqual(self.fake_logging.infos, [])
 
     ### tests for _save_progress() ###
 
