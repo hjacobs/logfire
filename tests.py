@@ -391,6 +391,42 @@ class LogReaderTests(TestCase):
         self.assertTrue(f.closed)
         self.assertEqual(reader._file, None)
 
+    ### tests for _update_file() ###
+
+    def test_update_file_do_seek(self):
+        called = []
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        reader._seek_position = lambda: called.append('_seek_position')
+        reader._open_file()
+        old_file = reader._file
+        reader._update_file()
+        try:
+            self.assertNotEqual(reader._file, old_file)
+            self.assertTrue(old_file.closed)
+            self.assertFalse(reader._file.closed)
+            self.assertEqual(called, ['_seek_position'])
+        finally:
+            reader._close_file()
+
+    def test_update_file_do_not_seek(self):
+        called = []
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        reader._seek_position = lambda: called.append('_seek_position')
+        reader._open_file()
+        old_file = reader._file
+        reader._update_file(seek_position=False)
+        try:
+            self.assertNotEqual(reader._file, old_file)
+            self.assertTrue(old_file.closed)
+            self.assertFalse(reader._file.closed)
+            self.assertEqual(called, [])
+        finally:
+            reader._close_file()
+
     ### tests for _do_housekeeping() ###
 
     def test_do_housekeeping_first_time(self):
