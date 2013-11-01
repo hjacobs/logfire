@@ -481,7 +481,6 @@ def main():
     parser.add_argument('files', nargs='+', help='use custom configuration profile (more than one profile allowed)')
     parser.add_argument('-p', '--profile', help='use custom configuration profile (more than one profile allowed)')
     parser.add_argument('-f', '--follow', action='store_true', help='keep file open reading new lines (like tail)')
-    parser.add_argument('-t', '--tail', action='store_true', help='show last N lines (default 100)')
     parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose mode')
     parser.add_argument('-n', '--lines', dest='tail_lines', default=100, type=int, metavar='N',
                         help='show last N lines (instead of default 100)')
@@ -490,12 +489,15 @@ def main():
     parser.add_argument('--truncate', metavar='CHARS', type=int, help='truncate log message to CHARS characters')
     parser.add_argument('-l', '--levels', help='only show log entries with log level(s)')
     parser.add_argument('-g', '--grep', metavar='PATTERN', help='only show log entries matching pattern')
-    parser.add_argument('--time-from', metavar='DATETIME', help='only show log entries starting at DATETIME')
     parser.add_argument('--time-to', metavar='DATETIME', help='only show log entries until DATETIME')
     parser.add_argument('--redis-host', help='redis host')
     parser.add_argument('--redis-port', type=int, default=6379, help='redis port')
     parser.add_argument('--redis-namespace', help='redis namespace')
-    parser.add_argument('--sincedb', help='sincedb path')
+    
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-t', '--tail', action='store_true', help='show last N lines (default 100)')
+    group.add_argument('--time-from', metavar='DATETIME', help='only show log entries starting at DATETIME')
+    group.add_argument('--sincedb', help='sincedb path')
 
     args = parser.parse_args()
 
