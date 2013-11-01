@@ -219,6 +219,12 @@ class LogReader(Thread):
     ### HOUSEKEEPING ###
 
     def _do_housekeeping(self, current_timestamp):
+        """
+        If more than _ensure_file_is_good_call_interval seconds have passed since _ensure_file_is_good was last called,
+        calls that method. Then, if more than _save_progress_call_interval seconds have passed since _save_progress was
+        last called, calls that method.
+        """
+
         if current_timestamp - self._last_ensure_file_is_good_call_timestamp > self._ensure_file_is_good_call_interval:
             self._last_ensure_file_is_good_call_timestamp = current_timestamp
             self._ensure_file_is_good()
