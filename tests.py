@@ -437,6 +437,7 @@ class LogReaderTests(TestCase):
     ### tests for _save_progress() ###
 
     def test_save_progress_success(self):
+        self.files_to_delete.append('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794')
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         reader._get_progress_string = lambda: 'log.log 123g456 10 19'
         reader._save_progress()
