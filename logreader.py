@@ -156,8 +156,7 @@ class LogReader(Thread):
         filt = self.filterdef
         self._open_file()
         self.parser.autoconfigure(self._file)
-        self._close_file()
-        self._open_file()
+        self._seek_position()
         if filt.time_from:
             self._seek_time(filt.time_from)
         while True:
@@ -181,7 +180,9 @@ class LogReader(Thread):
                 self._file.seek(where)
                 self._do_housekeeping(time.time())
 
-    def _open_file(self, seek_position=True):
+    ### FILES ###
+
+    def _open_file(self):
         """
         Opens the file the LogReader is responsible for and assigns it to _file. If that file has the extension ".gz",
         it is opened as a gzip file. Errors are propagated.
@@ -199,8 +200,6 @@ class LogReader(Thread):
         else:
             self._first = True
             self._file_device_and_inode_string = get_device_and_inode_string(os.fstat(self._file.fileno()))
-            if seek_position:
-                self._seek_position()
 
     def _close_file(self):
         """Closes the file the LogReader is responsible for and sets _file to None."""
@@ -209,7 +208,6 @@ class LogReader(Thread):
             self._file.close()
             self._file = None
             logging.info('Closed %s.' % self._filename)
-
 
     ### HOUSEKEEPING ###
 
@@ -250,7 +248,7 @@ class LogReader(Thread):
             if expected_device_and_inode_string != actual_device_and_inode_string:
                 logging.info('The file %s has been rotated.', self._filename)
                 self._close_file()
-                self._open_file(seek_position=False)
+                self._open_file()
             elif current_position > file_size:
                 logging.info('The file %s has been truncated.', self._filename)
                 self._file.seek(0)

@@ -351,11 +351,9 @@ class LogReaderTests(TestCase):
     ### tests for _open_file() ###
 
     def test_open_file_with_regular_file(self):
-        called = []
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
-        reader._seek_position = lambda: called.append('_seek_position')
         reader._open_file()
         try:
             self.assertEqual(reader._file.name, 'log.log')
@@ -363,17 +361,14 @@ class LogReaderTests(TestCase):
             self.assertRaises(reader._first)
             self.assertNotEqual(reader._file_device_and_inode_string, None)
             self.assertEqual(reader._file.read(), 'Some file contents!')
-            self.assertEqual(called, ['_seek_position'])
         finally:
             reader._file.close()
 
     def test_open_file_with_gzip_file(self):
-        called = []
         self.files_to_delete.append('log.gz')
         with gzip.open('log.gz', 'wb') as f:
             f.write('Some file contents!')
         reader = LogReader(0, 'log.gz', Log4jParser(), 'DUMMY RECEIVER')
-        reader._seek_position = lambda: called.append('_seek_position')
         reader._open_file()
         try:
             self.assertEqual(reader._file.name, 'log.gz')
@@ -381,19 +376,6 @@ class LogReaderTests(TestCase):
             self.assertRaises(reader._first)
             self.assertNotEqual(reader._file_device_and_inode_string, None)
             self.assertEqual(reader._file.read(), 'Some file contents!')
-            self.assertEqual(called, ['_seek_position'])
-        finally:
-            reader._file.close()
-
-    def test_open_file_without_seek_position(self):
-        called = []
-        with open('log.log', 'wb') as f:
-            f.write('Some file contents!')
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
-        reader._seek_position = lambda: called.append('_seek_position')
-        reader._open_file(seek_position=False)
-        try:
-            self.assertEqual(called, [])
         finally:
             reader._file.close()
 
