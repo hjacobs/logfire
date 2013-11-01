@@ -157,18 +157,19 @@ class LogReader(Thread):
         filt = self.filterdef
 
         while True:
-            had_entry = False
+            entry_count = 0
             for entry in self.parser.read(fid, self._file):
                 if filt.matches(entry):
                     receiver.add(entry)
-                self._do_housekeeping(time.time())
-                had_entry = True
+                entry_count += 1
+                if entry_count & 1023 == 0:
+                    self._maybe_do_housekeeping(time.time())
             if not self.follow:
                 receiver.eof(fid)
                 break
-            if not had_entry:
+            if entry_count == 0:
                 time.sleep(0.1)
-                self._do_housekeeping(time.time())
+                self._maybe_do_housekeeping(time.time())
 
     ### FILES ###
 
@@ -200,7 +201,7 @@ class LogReader(Thread):
 
     ### HOUSEKEEPING ###
 
-    def _do_housekeeping(self, current_timestamp):
+    def _maybe_do_housekeeping(self, current_timestamp):
         """
         If more than _ensure_file_is_good_call_interval seconds have passed since _ensure_file_is_good was last called,
         calls that method. Then, if more than _save_progress_call_interval seconds have passed since _save_progress was

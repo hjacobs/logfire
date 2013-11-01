@@ -393,38 +393,38 @@ class LogReaderTests(TestCase):
         self.assertTrue(f.closed)
         self.assertEqual(reader._file, None)
 
-    ### tests for _do_housekeeping() ###
+    ### tests for _maybe_do_housekeeping() ###
 
-    def test_do_housekeeping_first_time(self):
+    def test_maybe_do_housekeeping_first_time(self):
         called = []
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
-        reader._do_housekeeping(23)
+        reader._maybe_do_housekeeping(23)
         self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
         self.assertEqual(reader._last_ensure_file_is_good_call_timestamp, 23)
         self.assertEqual(reader._last_save_progress_call_timestamp, 23)
 
-    def test_do_housekeeping_second_time_too_early(self):
+    def test_maybe_do_housekeeping_second_time_too_early(self):
         called = []
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
         reader._last_ensure_file_is_good_call_timestamp = 23
         reader._last_save_progress_call_timestamp = 23
-        reader._do_housekeeping(24)
+        reader._maybe_do_housekeeping(24)
         self.assertEqual(called, [])
         self.assertEqual(reader._last_ensure_file_is_good_call_timestamp, 23)
         self.assertEqual(reader._last_save_progress_call_timestamp, 23)
 
-    def test_do_housekeeping_second_time_late_enough(self):
+    def test_maybe_do_housekeeping_second_time_late_enough(self):
         called = []
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
         reader._last_ensure_file_is_good_call_timestamp = 23
         reader._last_save_progress_call_timestamp = 23
-        reader._do_housekeeping(42)
+        reader._maybe_do_housekeeping(42)
         self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
         self.assertEqual(reader._last_ensure_file_is_good_call_timestamp, 42)
         self.assertEqual(reader._last_save_progress_call_timestamp, 42)
