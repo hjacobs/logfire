@@ -257,7 +257,7 @@ class LogReaderTests(TestCase):
             reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db', tail=10)
             reader._file = f
             reader._seek_position()
-            self.assertEqual(f.tell(), 10 * 75)
+            self.assertEqual(f.tell(), 0)
             self.assertEqual(self.fake_logging.warnings, ['Failed to read the sincedb file for "log.log".'])
 
     def test_seek_tail_not_enough_lines(self):

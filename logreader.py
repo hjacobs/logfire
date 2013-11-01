@@ -49,27 +49,24 @@ class LogReader(Thread):
 
     def _seek_position(self):
         """seek to start of "tail" (last n lines)"""
-        self._seek_sincedb_position() or self._seek_tail()
+        if self._full_sincedb_path:
+            self._seek_sincedb_position()
+        elif self.tail:
+            self._seek_tail()
+        elif self.filterdef.time_from:
+            self._seek_time()
 
     def _seek_sincedb_position(self):
-        if self._full_sincedb_path:
-            try:
-                _, device_and_inode_string, last_position, _ = self._load_progress()
-            except Exception:
-                logging.warning('Failed to read the sincedb file for "%s".', self._filename)
-                return False
-            else:
-                logging.info('Resumed reading "%s" at offset %d.', self._filename, last_position)
-                self._file_device_and_inode_string = device_and_inode_string
-                self._file.seek(last_position)
-                return True
+        try:
+            _, device_and_inode_string, last_position, _ = self._load_progress()
+        except Exception:
+            logging.warning('Failed to read the sincedb file for "%s".', self._filename)
         else:
-            return False
+            logging.info('Resumed reading "%s" at offset %d.', self._filename, last_position)
+            self._file_device_and_inode_string = device_and_inode_string
+            self._file.seek(last_position)
 
     def _seek_tail(self):
-        if not self.tail:
-            return
-
         chunk_size = 1024
         file_size = os.fstat(self._file.fileno()).st_size
         chunk_count = (file_size // chunk_size) + bool(file_size % chunk_size)
@@ -157,8 +154,7 @@ class LogReader(Thread):
         self._open_file()
         self.parser.autoconfigure(self._file)
         self._seek_position()
-        if filt.time_from:
-            self._seek_time(filt.time_from)
+
         while True:
             where = self._file.tell()
             had_entry = False
