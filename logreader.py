@@ -271,17 +271,26 @@ class LogReader(Thread):
         it is terminated.
         """
 
-        try:
-            current_position = self._file.tell()
-            file_size = os.fstat(self._file.fileno()).st_size
-            logging.debug('Writing sincedb for %s: at position %d of %d (%d bytes to go).', self._filename,
-                          current_position, file_size, file_size - current_position)
-            with open(self._full_sincedb_path, 'wb') as sincedb_file:
-                line = '%s %s %d %d' % (self._filename, self._file_device_and_inode_string, current_position, file_size)
-                sincedb_file.write(line)
-        except Exception:
-            logging.exception('Failed to save progress for %s in %s.', self._filename, self._full_sincedb_path)
+        progress = self._get_progress_string()
+        if progress:
+            logging.debug('Writing sincedb entry "%s".', progress)
+            try:
+                with open(self._full_sincedb_path, 'wb') as sincedb_file:
+                    sincedb_file.write(progress)
+            except Exception:
+                logging.exception('Failed to save progress for %s.', self._filename)
 
+
+    def _get_progress_string(self):
+        """Returns the sincedb string for the progress of the file the reader is responsible for."""
+
+        try:
+            position = self._file.tell()
+            size = os.fstat(self._file.fileno()).st_size
+            return '%s %s %d %d' % (self._filename, self._file_device_and_inode_string, position, size)
+        except Exception:
+            logging.exception('Failed to gather progress information for %s.', self._filename)
+            return None
 
 
 class LogFilter(object):

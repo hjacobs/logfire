@@ -441,16 +441,43 @@ class LogReaderTests(TestCase):
 
     ### tests for _save_progress() ###
 
-    def test_save_progress(self):
+    def test_save_progress_success(self):
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader._get_progress_string = lambda: 'log.log 123g456 10 19'
+        reader._save_progress()
+        with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'rb') as f:
+            self.assertEqual(f.read(), 'log.log 123g456 10 19')        
+
+    def test_save_progress_no_data(self):
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader._get_progress_string = lambda: None
+        reader._save_progress()
+        self.assertFalse(os.path.exists('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'))
+
+    def test_save_progress_failure(self):
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='invalid\0path')
+        reader._get_progress_string = lambda: 'log.log 123g456 10 19'
+        reader._save_progress()
+        self.assertFalse(os.path.exists('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'))
+        self.assertEqual(self.fake_logging.exception_messages, ['Failed to save progress for log.log.'])
+
+    ### tests for _get_progress_string() ###
+
+    def test_get_progress_string_success(self):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
             f.seek(10)
             reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
             reader._file = f
             reader._file_device_and_inode_string = '123g456'
-            reader._save_progress()
-        with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'rb') as f:
-            self.assertEqual(f.read(), 'log.log 123g456 10 19')
+            self.assertEqual(reader._get_progress_string(), 'log.log 123g456 10 19')
+
+    def test_get_progress_string_failure(self):
+        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader._file_device_and_inode_string = '123g456'
+        result = reader._get_progress_string()
+        self.assertEqual(result, None)
+        self.assertEqual(self.fake_logging.exception_messages, ['Failed to gather progress information for log.log.'])
 
 
     def write_log_file(self, *lines):
@@ -511,7 +538,8 @@ class FakeLogging(object):
         self.warnings.append(self.format_message(msg, args))
 
     def exception(self, msg, *args, **kwargs):
-        self.exceptions.append((self.format_message(msg, args), sys.exc_info()))
+        self.exception_messages.append(self.format_message(msg, args))
+        self.exception_infos.append(sys.exc_info())
 
     @classmethod
     def format_message(cls, msg, args):
@@ -523,4 +551,5 @@ class FakeLogging(object):
         self.debugs = []
         self.infos = []
         self.warnings = []
-        self.exceptions = []
+        self.exception_messages = []
+        self.exception_infos = []
