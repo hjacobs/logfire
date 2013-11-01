@@ -199,7 +199,7 @@ class LogReader(Thread):
         else:
             self._first = True
             stat_results = os.fstat(self._file.fileno())
-            self._file_device_and_inode_string = self.get_device_and_inode_string(stat_results)
+            self._file_device_and_inode_string = get_device_and_inode_string(stat_results)
             if seek_position:
                 self._seek_position()
 
@@ -210,10 +210,6 @@ class LogReader(Thread):
             self._file.close()
             self._file = None
             logging.info('Closed %s.' % self._filename)
-
-    @staticmethod
-    def get_device_and_inode_string(st):
-        return '%xg%x' % (st.st_dev, st.st_ino)
 
 
     ### HOUSEKEEPING ###
@@ -248,7 +244,7 @@ class LogReader(Thread):
             logging.info('The file %s has been removed.', self._filename)
         else:
             expected_device_and_inode_string = self._file_device_and_inode_string
-            actual_device_and_inode_string = self.get_device_and_inode_string(stat_results)
+            actual_device_and_inode_string = get_device_and_inode_string(stat_results)
             current_position = self._file.tell()
             file_size = stat_results.st_size
 
@@ -316,3 +312,6 @@ class LogFilter(object):
             ok = entry.ts < self.time_to
 
         return ok
+
+def get_device_and_inode_string(st):
+    return '%xg%x' % (st.st_dev, st.st_ino)

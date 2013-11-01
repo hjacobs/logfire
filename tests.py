@@ -9,7 +9,7 @@ import sys
 import logfire
 import logreader
 from logfire import Log4jParser, LogLevel
-from logreader import LogReader
+from logreader import LogReader, get_device_and_inode_string
 
 
 class Log4jParserTests(TestCase):
@@ -452,7 +452,7 @@ class LogReaderTests(TestCase):
             f.write('Some file contents!')
             reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
             reader._file = f
-            reader._file_device_and_inode_string = reader.get_device_and_inode_string(os.fstat(f.fileno()))
+            reader._file_device_and_inode_string = get_device_and_inode_string(os.fstat(f.fileno()))
             f.truncate(0) 
             reader._ensure_file_is_good()
             self.assertFalse(f.closed)
@@ -466,7 +466,7 @@ class LogReaderTests(TestCase):
             f.seek(10)
             reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
             reader._file = f
-            reader._file_device_and_inode_string = reader.get_device_and_inode_string(os.fstat(f.fileno()))
+            reader._file_device_and_inode_string = get_device_and_inode_string(os.fstat(f.fileno()))
             reader._ensure_file_is_good()
             self.assertFalse(f.closed)
             self.assertEqual(reader._file, f)
