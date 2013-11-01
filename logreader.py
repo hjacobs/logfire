@@ -210,13 +210,8 @@ class LogReader(Thread):
 
         self._close_file()
         self._open_file()
-        try:
-            st = os.stat(self._filename)
-        except EnvironmentError, err:
-            if err.errno == errno.ENOENT:
-                logging.info('file removed')
-                self._close_file()
-        self._file_device_and_inode_string = self.get_device_and_inode_string(st)
+        stat_results = os.fstat(self._file.fileno())
+        self._file_device_and_inode_string = self.get_device_and_inode_string(stat_results)
         if seek_to_end and self.tail:
             self._seek_position()
 
