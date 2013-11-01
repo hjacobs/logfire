@@ -230,22 +230,16 @@ class LogReaderTests(TestCase):
 
     def setUp(self):
         logreader.logging = self.fake_logging
+        self.files_to_delete = ['log.log']
 
     def tearDown(self):
         logfire.logfire = logging
         self.fake_logging.reset()
-        try:
-            os.remove('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794')
-        except OSError:
-            pass
-        try:
-            os.remove('log.log')
-        except OSError:
-            pass
-        try:
-            os.remove('log.gz')
-        except OSError:
-            pass
+        for f in self.files_to_delete:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
     def test_seek_sincedb_position(self):
         self.write_log_file('XXXX\n' * 100)
@@ -369,6 +363,7 @@ class LogReaderTests(TestCase):
             reader._file.close()
 
     def test_open_gzip_file(self):
+        self.files_to_delete.append('log.gz')
         with gzip.open('log.gz', 'wb') as f:
             f.write('Some file contents!')
         reader = LogReader(0, 'log.gz', Log4jParser(), 'DUMMY RECEIVER')
@@ -469,6 +464,7 @@ class LogReaderTests(TestCase):
         self.assertEqual(reader._load_progress(), ('log.log', '123g456', 50, 75))
 
     def test_load_progress_with_spaces_in_filename(self):
+        self.files_to_delete.append('since.dbf4a53d67a02158bcc92d7d702a8f438ad18309488')
         with open('since.dbf4a53d67a02158bcc92d7d702a8f438ad18309488', 'wb') as f:
             f.write('log with spaces in name.log 123g456 50 75')
         reader = LogReader(0, 'log with spaces in name.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
@@ -498,6 +494,7 @@ class LogReaderTests(TestCase):
             f.write('\n'.join(lines))
 
     def write_sincedb_file(self, contents):
+        self.files_to_delete.append('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794')
         with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'wb') as f:
             f.write(contents)
 
