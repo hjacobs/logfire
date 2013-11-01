@@ -358,7 +358,6 @@ class LogReaderTests(TestCase):
         try:
             self.assertEqual(reader._file.name, 'log.log')
             self.assertFalse(reader._file.closed)
-            self.assertRaises(reader._first)
             self.assertNotEqual(reader._file_device_and_inode_string, None)
             self.assertEqual(reader._file.read(), 'Some file contents!')
         finally:
@@ -373,7 +372,6 @@ class LogReaderTests(TestCase):
         try:
             self.assertEqual(reader._file.name, 'log.gz')
             self.assertFalse(reader._file.closed)
-            self.assertRaises(reader._first)
             self.assertNotEqual(reader._file_device_and_inode_string, None)
             self.assertEqual(reader._file.read(), 'Some file contents!')
         finally:

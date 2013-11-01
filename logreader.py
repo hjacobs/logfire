@@ -33,7 +33,6 @@ class LogReader(Thread):
         self.filterdef = filterdef or LogFilter()
         self._file_device_and_inode_string = None
         self._file = None
-        self._first = False
         self._sincedb_path = sincedb
 
         self._ensure_file_is_good_call_interval = 2  # seconds
@@ -154,15 +153,11 @@ class LogReader(Thread):
         self._open_file()
         self.parser.autoconfigure(self._file)
         self._seek_position()
-
         while True:
             where = self._file.tell()
             had_entry = False
             for entry in self.parser.read(fid, self._file):
                 if filt.matches(entry):
-                    if self._first:
-                        logging.debug('First entry: %s', entry.ts)
-                        self._first = False
                     # print entry.ts
                     receiver.add(entry)
                 # print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
@@ -194,7 +189,6 @@ class LogReader(Thread):
             logging.exception('Failed to open %s.', self._filename)
             raise
         else:
-            self._first = True
             self._file_device_and_inode_string = get_device_and_inode_string(os.fstat(self._file.fileno()))
 
     def _close_file(self):
