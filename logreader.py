@@ -220,6 +220,8 @@ class LogReader(Thread):
         if seek_to_end and self.tail:
             self._seek_position()
 
+    ### HOUSEKEEPING ###
+
     def _do_housekeeping(self, current_time):
         if self._last_file_mapping_update and current_time - self._last_file_mapping_update <= self._stat_interval:
             result = True
@@ -235,14 +237,18 @@ class LogReader(Thread):
         return result
 
     def _ensure_file_is_good(self):
-        """Every N seconds, ensures that the file we are tailing is the file we expect to be tailing"""
+        """
+        Ensures that the file the reader is tailing is the file it is supposed to be tailing.
+        If the target file has been removed, does nothing. If there is a new file in its place, stops tailing the
+        current file and tails the new file instead. If the current file position lies past the file's end, resets
+        it to the file's beginning.
+        """
         
         try:
             st = os.stat(self._filename)
         except OSError, e:
             logging.info('The file %s has been removed.', self._filename)
             return False
-
 
         expected_device_and_inode_string = self._file_device_and_inode_string
         actual_device_and_inode_string = self.get_device_and_inode_string(st)
@@ -251,7 +257,6 @@ class LogReader(Thread):
             logging.info('The file %s has been rotated.', self._filename)
             self._update_file(seek_to_end=False)
             return False
-
 
         current_position = self._file.tell()
         file_size = st.st_size

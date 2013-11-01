@@ -434,6 +434,18 @@ class LogReaderTests(TestCase):
             self.assertEqual(reader._file, f)
             self.assertEqual(f.tell(), 0)
 
+    def test_ensure_file_is_good_file_is_good(self):
+        with open('log.log', 'wb') as f:
+            f.write('Some file contents!')
+            f.seek(10)
+            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+            reader._file = f
+            reader._file_device_and_inode_string = reader.get_device_and_inode_string(os.fstat(f.fileno()))
+            reader._ensure_file_is_good()
+            self.assertFalse(f.closed)
+            self.assertEqual(reader._file, f)
+            self.assertEqual(f.tell(), 10)
+
     ### tests for _save_progress() ###
 
     def test_save_progress_success(self):
