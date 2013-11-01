@@ -153,9 +153,10 @@ class LogReader(Thread):
         fid = self.fid
         receiver = self.receiver
         filt = self.filterdef
-        self._update_file()
+        self._open_file()
         self.parser.autoconfigure(self._file)
-        self._update_file()
+        self._close_file()
+        self._open_file()
         if filt.time_from:
             self._seek_time(filt.time_from)
         while True:
@@ -179,7 +180,7 @@ class LogReader(Thread):
                 self._file.seek(where)
                 self._do_housekeeping(time.time())
 
-    def _open_file(self):
+    def _open_file(self, seek_position=True):
         """
         Opens the file the LogReader is responsible for and assigns it to _file. If that file has the extension ".gz",
         it is opened as a gzip file. Errors are propagated.
@@ -194,7 +195,12 @@ class LogReader(Thread):
         except IOError:
             logging.exception('Failed to open %s.', self._filename)
             raise
-        self._first = True
+        else:
+            self._first = True
+            stat_results = os.fstat(self._file.fileno())
+            self._file_device_and_inode_string = self.get_device_and_inode_string(stat_results)
+            if seek_position:
+                self._seek_position()
 
     def _close_file(self):
         """Closes the file the LogReader is responsible for and sets _file to None."""
@@ -208,15 +214,6 @@ class LogReader(Thread):
     def get_device_and_inode_string(st):
         return '%xg%x' % (st.st_dev, st.st_ino)
 
-    def _update_file(self, seek_position=True):
-        """Open the file for tailing"""
-
-        self._close_file()
-        self._open_file()
-        stat_results = os.fstat(self._file.fileno())
-        self._file_device_and_inode_string = self.get_device_and_inode_string(stat_results)
-        if seek_position:
-            self._seek_position()
 
     ### HOUSEKEEPING ###
 
@@ -249,7 +246,8 @@ class LogReader(Thread):
 
             if expected_device_and_inode_string != actual_device_and_inode_string:
                 logging.info('The file %s has been rotated.', self._filename)
-                self._update_file(seek_position=False)
+                self._close_file()
+                self._open_file(seek_position=False)
             elif current_position > file_size:
                 logging.info('The file %s has been truncated.', self._filename)
                 self._file.seek(0)
