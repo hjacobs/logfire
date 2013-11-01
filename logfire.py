@@ -2,11 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import collections
-import errno
-import gzip
-import hashlib
 import heapq
-import io
 import json
 import logging
 import os
@@ -17,14 +13,19 @@ import traceback
 from threading import Thread
 from argparse import ArgumentParser
 
+from logreader import LogReader, LogFilter
+
 LOG_FORMAT = '%(asctime)s %(levelname)s: %(message)s'
 
 
 class LogLevel(object):
 
+    FROM_FIRST_LETTER = {}
+
     def __init__(self, priority, name):
         self.priority = priority
         self.name = name
+        LogLevel.FROM_FIRST_LETTER[name[0]] = self
 
     def __str__(self):
         return self.name
@@ -55,122 +56,177 @@ class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread 
         return d
 
 
-class Log4Jparser(object):
+class Log4jParser(object):
 
     def __init__(self):
         # default pattern: %d %x %p %t %l: %m%n
         self.delimiter = ' '
-        self.columns = 5
-        self.col_flowid = 0
-        self.col_level = 1
-        self.col_thread = 2
-        self.col_location = 3
-        self.col_message = 4
+        self.column_count = 5
+        self.flow_id_column_index = 0
+        self.level_column_index = 1
+        self.thread_column_index = 2
+        self.location_column_index = 3
+        self.message_column_index = 4
 
-    def auto_configure(self, fd):
-        """try to auto-configure the parser"""
+    def autoconfigure(self, logfile):
+        """try to autoconfigure the parser"""
+        # TODO: Document that this method will fail if the given file does not yet contain any log entries.
 
-        try:
-            for entry in self.read(0, fd):
+        sample_line = logfile.readline()
+        logfile.seek(0)
+
+        # We assume that the delimiter is always a single space character.
+        self.delimiter = ' '
+
+        # We assume the date column (%d) is always the first column and do not assign an index to it.
+        # The column immediately following the date column has index 0.
+        parts = sample_line[24:].split(self.delimiter)
+
+        # The code location column (%l) has a very distinctive format, usually, so we can search for it.
+        # We assume it is the second, third, or fourth column after the date column
+        for column_index, p in enumerate(parts[1:4], start=1):
+            if self._is_valid_code_position(p):
+                self.location_column_index = column_index
                 break
-        except ValueError:
-            # log4j pattern with thread name: %d [%p] %t: %l - %m%n
-            self.delimiter = None
-            self.columns = 4
-            self.col_flowid = None
-            self.col_level = 0
-            self.col_thread = 1
-            self.col_location = 2
-            self.col_message = 3
-        fd.seek(0)
+        else:
+            raise Exception('Cannot auto-configure the parser. There does not seem to be a code location.')
 
-        try:
-            for entry in self.read(0, fd):
-                break
-        except ValueError:
-            # log4j pattern without thread name: %d [%p] %l - %m%n
-            self.columns = 3
-            self.col_flowid = None
-            self.col_level = 0
-            self.col_thread = None
-            self.col_location = 1
-            self.col_message = 2
-        fd.seek(0)
+        # We assume that the message column (%m) comes immediately after the code location column,
+        # and that it is the last column.
+        self.message_column_index = self.location_column_index + 1
+        self.column_count = self.message_column_index + 1
 
-    def read(self, fid, fd):
+        # We assume that, if there are exactly three columns (not counting the date column), the first
+        # column after the date column is the priority column (%p), and that there are no thread (%t)
+        # or flow ID (%x) columns.
+        if self.column_count == 3:
+            self.level_column_index = 0
+            self.thread_column_index = None
+            self.flow_id_column_index = None
+
+        # We assume that, if there are exactly four columns (not counting the date column), the first
+        # two column after the date column are the priority column (%p) and the thread column (%t),
+        # in that order, and that there is no flow ID (%x) column.
+        if self.column_count == 4:
+            self.level_column_index = 0
+            self.thread_column_index = 1
+            self.flow_id_column_index = None
+
+        # We assume that, if there are exactly five columns (not counting the date column), the first
+        # three column after the date column are the flow ID column (%x), the priority column (%p),
+        # and the thread column (%t), in that order.
+        if self.column_count == 5:
+            self.flow_id_column_index = 0
+            self.level_column_index = 1
+            self.thread_column_index = 2
+
+        # There cannot be more than five columns (not counting the date column).
+        return
+
+    def read(self, fid, logfile):
         """read log4j formatted log file"""
 
-        maxsplit = self.columns - 1
-        delimiter = self.delimiter
-        col_flowid = self.col_flowid
-        col_level = self.col_level
-        col_thread = self.col_thread
-        col_location = self.col_location
-        col_message = self.col_message
+        assert 'b' in getattr(logfile, 'mode', 'rb'), 'The file has not been opened in binary mode.'
 
-        lastline = None
+        maxsplit = self.column_count - 1
+        delimiter = self.delimiter
+        flow_id_column_index = self.flow_id_column_index
+        level_column_index = self.level_column_index
+        thread_column_index = self.thread_column_index
+        location_column_index = self.location_column_index
+        message_column_index = self.message_column_index
+
         i = 0
         while True:
-            line = lastline or fd.readline()
+            line = logfile.readline()
             if not line:
                 break
             try:
                 ts = line[:23]
-                if ts[:2] != '20':
+                if not ts.startswith('20'):
+                    logging.warn('Skipped a line because it does not appear to start with a date: "%s".', line)
                     continue
-                cols = line[24:].split(delimiter, maxsplit)
-                if len(cols) < self.columns:
+                columns = line[24:].split(delimiter, maxsplit)
+                if len(columns) < self.column_count:
+                    logging.warn('Skipped a line because it does not have a sufficient number of columns: "%s".', line)
                     continue
-                c = cols[col_level].strip('[]')[0]
-                if c == 'T':
-                    level = LogLevel.TRACE
-                elif c == 'D':
-                    level = LogLevel.DEBUG
-                elif c == 'I':
-                    level = LogLevel.INFO
-                elif c == 'W':
-                    level = LogLevel.WARN
-                elif c == 'E':
-                    level = LogLevel.ERROR
-                else:
-                    level = LogLevel.FATAL
-                flowid = col_flowid is not None and cols[col_flowid] or None
-                thread = col_thread is not None and cols[col_thread].rstrip(':') or None
-                source_class, source_location = cols[col_location].split('(', 1)
-                pos = source_class.rindex('.')
-                clazz, method = source_class[:pos], source_class[pos + 1:]
-                _file, line = source_location.split(':', 1)
-                line = int(line.rstrip('):'))
-                msg = cols[col_message]
-                while True:
-                    try:
-                        lastline = fd.readline()
-                    except ValueError:
-                        break
-                    if not lastline:
-                        break
-                    if lastline[:2] == '20' and lastline[23:24] == ' ':
-                        # start of new log entry
-                        break
-                    msg += lastline
-                    lastline = None
-            except:
+                level = self._read_log_level(columns, level_column_index)
+                flow_id = self._read_flow_id(columns, flow_id_column_index)
+                thread = self._read_thread(columns, thread_column_index)
+                class_, method, file_, line_number = self._read_code_position(columns, location_column_index)
+                message = self._read_message(columns, message_column_index, logfile)
+            except Exception:  #pragma: nocover
+                # This shouldn't actually be possible.
                 logging.exception('Failed to parse line "%s" of %s', line, fid)
             else:
                 yield LogEntry(
                     fid=fid,
                     ts=ts,
                     i=i,
-                    flowid=flowid,
+                    flowid=flow_id,
                     level=level,
                     thread=thread,
-                    clazz=clazz,
+                    clazz=class_,
                     method=method,
-                    file=_file,
-                    line=line,
-                    message=msg.rstrip(),
+                    file=file_,
+                    line=line_number,
+                    message=message,
                 )
             i += 1
+
+    def get_time_string(self, line):
+        if self.is_continuation_line(line):
+            raise Exception('Continuation lines do not have time strings.')
+        else:
+            return line[:23]
+
+    def _read_log_level(self, columns, index):
+        return LogLevel.FROM_FIRST_LETTER.get(columns[index].lstrip('[')[:1], LogLevel.FATAL)
+
+    def _read_flow_id(self, columns, index):
+        if index is None:
+            return None
+        else:
+            return columns[index].rstrip(':')
+
+    def _read_thread(self, columns, index):
+        if index is None:
+            return None
+        else:
+            return columns[index].rstrip(':')
+
+    def _read_code_position(self, columns, index):
+        return self._split_code_position(columns[index])
+
+    def _is_valid_code_position(self, string):
+        class_, method, file_, line_number = self._split_code_position(string)
+        return bool(class_ and method and file_ and line_number != -1)
+
+    def _split_code_position(self, string):
+        class_and_method, _, file_and_line_number = string.rstrip(':)').rpartition('(')
+        class_, _, method = class_and_method.rpartition('.')
+        file_, _, line_number = file_and_line_number.partition(':')
+        return class_, method, file_, try_parsing_int(line_number, default=-1)
+
+    def _read_message(self, columns, index, logfile):
+        lines = [columns[index]]
+        while True:
+            l = logfile.readline()
+            if self.is_continuation_line(l):
+                lines.append(l)
+            else:
+                logfile.seek(-len(l), os.SEEK_CUR)
+                return ''.join(lines).rstrip()
+
+    def is_continuation_line(self, line):
+        return line and not (line.startswith('20') and line[23:24] == ' ')
+
+
+def try_parsing_int(string, default=None):
+    try:
+        return int(string)
+    except ValueError:
+        return default
 
 
 def parse_timestamp(ts):
@@ -180,239 +236,6 @@ def parse_timestamp(ts):
         ts += ':00'
     struct = time.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
     return time.mktime(struct)
-
-
-class LogReader(Thread):
-
-    def __init__(
-        self,
-        fid,
-        fname,
-        parser,
-        receiver,
-        tail=0,
-        follow=False,
-        filterdef=None,
-        sincedb=None,
-    ):
-
-        Thread.__init__(self, name='LogReader-%d' % (fid, ))
-        self.fid = fid
-        self._filename = fname
-        self._fhash = hashlib.sha1(fname).hexdigest()
-        self.parser = parser
-        self.receiver = receiver
-        self.tail = tail
-        self.follow = follow
-        self.filterdef = filterdef or LogFilter()
-        self._last_file_mapping_update = None
-        self._stat_interval = 2
-        self._sincedb_write_interval = 5
-        self._fid = None
-        self._file = None
-        self._first = False
-        self._sincedb_path = sincedb
-        self._last_sincedb_write = None
-
-    def _seek_tail(self):
-        """seek to start of "tail" (last n lines)"""
-
-        if self._sincedb_path:
-            last_pos = None
-            try:
-                with open(self._sincedb()) as fd:
-                    fname, fid, last_pos, last_size = fd.read().split()
-                last_pos = int(last_pos)
-                self._fid = fid
-            except:
-                pass
-            if last_pos is not None:
-                logging.debug('Resuming %s at offset %s', self._filename, last_pos)
-                self._file.seek(last_pos)
-                return
-        n = self.tail
-        logging.debug('Seeking to %s tail lines', n)
-        l = os.path.getsize(self._filename)
-        s = -1024 * n
-        if s * -1 >= l:
-            # apparently the file is too small
-            # => seek to start of file
-            logging.debug('file too small')
-            self._file.seek(0)
-            return
-        self._file.seek(s, 2)
-        t = self._file.tell()
-        contents = self._file.read()
-        e = len(contents)
-        i = 0
-        while e >= 0:
-            e = contents.rfind('\n', 0, e)
-            if e >= 0:
-                i += 1
-                if i >= n:
-                    self._file.seek(t + e)
-                    break
-
-    def _seek_time(self, fd, ts):
-        """try to seek to our start time"""
-
-        s = os.path.getsize(self._filename)
-        fd.seek(0)
-
-        if s < 8192:
-            # file is too small => we do not need to seek around
-            return
-
-        file_start = None
-        for entry in self.parser.read(0, fd):
-            file_start = entry.ts
-            break
-
-        fd.seek(-1024, 2)
-        file_end = None
-        for entry in self.parser.read(0, fd):
-            file_end = entry.ts
-            break
-
-        if not file_start or not file_end:
-            fd.seek(0)
-            return
-
-        start = parse_timestamp(file_start)
-        t = parse_timestamp(ts)
-        end = parse_timestamp(file_end)
-
-        if end - start <= 0:
-            fd.seek(0)
-            return
-
-        ratio = max(0, (t - start) / (end - start) - 0.2)
-        fd.seek(s * ratio)
-
-    def run(self):
-        fid = self.fid
-        receiver = self.receiver
-        filt = self.filterdef
-        self._update_file()
-        self.parser.auto_configure(self._file)
-        self._update_file()
-        if filt.time_from:
-            self._seek_time(self._file, filt.time_from)
-        while True:
-            where = self._file.tell()
-            had_entry = False
-            for entry in self.parser.read(fid, self._file):
-                if filt.matches(entry):
-                    if self._first:
-                        logging.debug('First entry: %s', entry.ts)
-                        self._first = False
-                    # print entry.ts
-                    receiver.add(entry)
-                # print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
-                self._ensure_file_is_good(time.time())
-                had_entry = True
-            if not self.follow:
-                receiver.eof(fid)
-                break
-            if not had_entry:
-                time.sleep(0.1)
-                if self._ensure_file_is_good(time.time()):
-                    self._file.seek(where)
-
-    def open(self, encoding=None):
-        """Opens the file with the appropriate call"""
-
-        logging.info('Opening %s..', self._filename)
-        try:
-            if self._filename.endswith('.gz'):
-                _file = gzip.open(self._filename, 'rb')
-            else:
-                _file = io.open(self._filename, 'rb')
-        except IOError:
-            logging.exception('Failed to open %s', self._filename)
-            raise
-            # logging.warn(str(e))
-            # _file = None
-            # self.close()
-        self._first = True
-
-        return _file
-
-    @staticmethod
-    def get_file_id(st):
-        return '%xg%x' % (st.st_dev, st.st_ino)
-
-    def _update_file(self, seek_to_end=True):
-        """Open the file for tailing"""
-
-        try:
-            self.close()
-            self._file = self.open()
-        except IOError:
-            raise
-        try:
-            st = os.stat(self._filename)
-        except EnvironmentError, err:
-            if err.errno == errno.ENOENT:
-                logging.info('file removed')
-                self.close()
-        self._fid = self.get_file_id(st)
-        if seek_to_end and self.tail:
-            self._seek_tail()
-
-    def close(self):
-        """Closes all currently open file pointers"""
-
-        self.active = False
-        if self._file:
-            self._file.close()
-
-    def _sincedb(self):
-        return '{}f{}'.format(self._sincedb_path, self._fhash)
-
-    def _ensure_file_is_good(self, current_time):
-        """Every N seconds, ensures that the file we are tailing is the file we expect to be tailing"""
-
-        if self._last_file_mapping_update and current_time - self._last_file_mapping_update <= self._stat_interval:
-            return True
-
-        self._last_file_mapping_update = current_time
-
-        try:
-            st = os.stat(self._filename)
-        except EnvironmentError, err:
-            if err.errno == errno.ENOENT:
-                logging.info('file removed')
-                return
-
-        fid = self.get_file_id(st)
-        cur_pos = self._file.tell()
-        if fid != self._fid:
-            logging.info('file "%s" rotated', self._filename)
-            self._update_file(seek_to_end=False)
-            return False
-        elif cur_pos > st.st_size:
-            if st.st_size == 0 and self._ignore_truncate:
-                logging.info('[{0}] - file size is 0 {1}. '.format(fid, self._filename)
-                             + 'If you use another tool (i.e. logrotate) to truncate '
-                             + 'the file, your application may continue to write to '
-                             + "the offset it last wrote later. In such a case, we'd " + 'better do nothing here')
-                return
-            logging.info('file "%s" truncated', self._filename)
-            self._update_file(seek_to_end=False)
-            return False
-        if self._sincedb_path and (not self._last_sincedb_write or current_time - self._last_sincedb_write
-                                   > self._sincedb_write_interval):
-            self._last_sincedb_write = current_time
-            path = self._sincedb()
-            logging.debug('Writing sincedb for %s: %s of %s (%s Bytes to go)', self._filename, cur_pos, st.st_size,
-                          st.st_size - cur_pos)
-            try:
-                with open(path, 'wb') as fd:
-                    fd.write(' '.join((self._filename, self._fid, str(cur_pos), str(st.st_size))))
-            except:
-                logging.exception('Failed to write to %s', path)
-        return True
 
 
 class Watcher:
@@ -652,33 +475,12 @@ class OutputThread(Thread):
             fd.write('\n')
 
 
-class LogFilter(object):
-
-    def __init__(self):
-        self.levels = set()
-        self.grep = None
-        self.time_from = None
-        self.time_to = None
-
-    def matches(self, entry):
-        ok = not self.levels or entry.level in self.levels
-        if ok and self.grep:
-            ok = self.grep in entry.message or self.grep in entry.source_class
-        if ok and self.time_from:
-            ok = entry.ts >= self.time_from
-        if ok and self.time_to:
-            ok = entry.ts < self.time_to
-
-        return ok
-
-
 def main():
     Watcher()
     parser = ArgumentParser()
     parser.add_argument('files', nargs='+', help='use custom configuration profile (more than one profile allowed)')
     parser.add_argument('-p', '--profile', help='use custom configuration profile (more than one profile allowed)')
     parser.add_argument('-f', '--follow', action='store_true', help='keep file open reading new lines (like tail)')
-    parser.add_argument('-t', '--tail', action='store_true', help='show last N lines (default 100)')
     parser.add_argument('-v', '--verbose', action='store_true', help='enable verbose mode')
     parser.add_argument('-n', '--lines', dest='tail_lines', default=100, type=int, metavar='N',
                         help='show last N lines (instead of default 100)')
@@ -687,12 +489,15 @@ def main():
     parser.add_argument('--truncate', metavar='CHARS', type=int, help='truncate log message to CHARS characters')
     parser.add_argument('-l', '--levels', help='only show log entries with log level(s)')
     parser.add_argument('-g', '--grep', metavar='PATTERN', help='only show log entries matching pattern')
-    parser.add_argument('--time-from', metavar='DATETIME', help='only show log entries starting at DATETIME')
     parser.add_argument('--time-to', metavar='DATETIME', help='only show log entries until DATETIME')
     parser.add_argument('--redis-host', help='redis host')
     parser.add_argument('--redis-port', type=int, default=6379, help='redis port')
     parser.add_argument('--redis-namespace', help='redis namespace')
-    parser.add_argument('--sincedb', help='sincedb path')
+    
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-t', '--tail', action='store_true', help='show last N lines (default 100)')
+    group.add_argument('--time-from', metavar='DATETIME', help='only show log entries starting at DATETIME')
+    group.add_argument('--sincedb', help='sincedb path')
 
     args = parser.parse_args()
 
@@ -757,7 +562,7 @@ def main():
         if not args.redis_host:
             file_names[fid] = name
         used_file_names.add(name)
-        parser = Log4Jparser()
+        parser = Log4jParser()
         readers.append(LogReader(
             fid,
             fpath,
