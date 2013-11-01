@@ -147,20 +147,20 @@ class LogReader(Thread):
         seek_time_in_chunk(target_chunk_index)
 
     def run(self):
-        fid = self.fid
-        receiver = self.receiver
-        filt = self.filterdef
         self._open_file()
         self.parser.autoconfigure(self._file)
         self._seek_position()
+
+        # Performance!
+        fid = self.fid
+        receiver = self.receiver
+        filt = self.filterdef
+
         while True:
-            where = self._file.tell()
             had_entry = False
             for entry in self.parser.read(fid, self._file):
                 if filt.matches(entry):
-                    # print entry.ts
                     receiver.add(entry)
-                # print entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
                 self._do_housekeeping(time.time())
                 had_entry = True
             if not self.follow:
@@ -168,7 +168,6 @@ class LogReader(Thread):
                 break
             if not had_entry:
                 time.sleep(0.1)
-                self._file.seek(where)
                 self._do_housekeeping(time.time())
 
     ### FILES ###
