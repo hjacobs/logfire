@@ -198,8 +198,7 @@ class LogReader(Thread):
             raise
         else:
             self._first = True
-            stat_results = os.fstat(self._file.fileno())
-            self._file_device_and_inode_string = get_device_and_inode_string(stat_results)
+            self._file_device_and_inode_string = get_device_and_inode_string(os.fstat(self._file.fileno()))
             if seek_position:
                 self._seek_position()
 
