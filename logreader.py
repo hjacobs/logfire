@@ -66,6 +66,9 @@ class LogReader(Thread):
             return False
 
     def _seek_tail(self):
+        if not self.tail:
+            return
+
         chunk_size = 1024
         file_size = os.fstat(self._file.fileno()).st_size
         chunk_count = (file_size // chunk_size) + bool(file_size % chunk_size)
@@ -205,14 +208,14 @@ class LogReader(Thread):
     def get_device_and_inode_string(st):
         return '%xg%x' % (st.st_dev, st.st_ino)
 
-    def _update_file(self, seek_to_end=True):
+    def _update_file(self, seek_position=True):
         """Open the file for tailing"""
 
         self._close_file()
         self._open_file()
         stat_results = os.fstat(self._file.fileno())
         self._file_device_and_inode_string = self.get_device_and_inode_string(stat_results)
-        if seek_to_end and self.tail:
+        if seek_position:
             self._seek_position()
 
     ### HOUSEKEEPING ###
@@ -246,7 +249,7 @@ class LogReader(Thread):
 
             if expected_device_and_inode_string != actual_device_and_inode_string:
                 logging.info('The file %s has been rotated.', self._filename)
-                self._update_file(seek_to_end=False)
+                self._update_file(seek_position=False)
             elif current_position > file_size:
                 logging.info('The file %s has been truncated.', self._filename)
                 self._file.seek(0)
