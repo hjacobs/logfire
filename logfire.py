@@ -568,10 +568,10 @@ def main():
             fpath,
             parser,
             aggregator,
-            tail=tail_lines,
+            tail_length=tail_lines,
             follow=args.follow,
-            filterdef=filterdef,
-            sincedb=args.sincedb,
+            entry_filter=filterdef,
+            progress_file_path_prefix=args.sincedb,
         ))
         fid += 1
     for reader in readers:
