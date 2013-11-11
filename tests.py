@@ -480,20 +480,20 @@ class LogReaderTests(TestCase):
     def test_save_progress_success(self):
         self.files_to_delete.append('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794')
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
-        reader._get_progress_string = lambda: 'log.log 123g456 10 19'
+        reader._make_progress_string = lambda: 'log.log 123g456 10 19'
         reader._save_progress()
         with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'rb') as f:
             self.assertEqual(f.read(), 'log.log 123g456 10 19')        
 
     def test_save_progress_no_data(self):
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
-        reader._get_progress_string = lambda: None
+        reader._make_progress_string = lambda: None
         reader._save_progress()
         self.assertFalse(os.path.exists('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'))
 
     def test_save_progress_failure(self):
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='invalid\0path')
-        reader._get_progress_string = lambda: 'log.log 123g456 10 19'
+        reader._make_progress_string = lambda: 'log.log 123g456 10 19'
         reader._save_progress()
         self.assertFalse(os.path.exists('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'))
         self.assertEqual(self.fake_logging.exception_messages, ['Failed to save progress for log.log.'])
@@ -512,21 +512,21 @@ class LogReaderTests(TestCase):
         reader = LogReader(0, 'log with spaces in name.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         self.assertEqual(reader._load_progress(), ('log with spaces in name.log', '123g456', 50, 75))
 
-    ### tests for _get_progress_string() ###
+    ### tests for _make_progress_string() ###
 
-    def test_get_progress_string_success(self):
+    def test_make_progress_string_success(self):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
             f.seek(10)
             reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
             reader._file = f
             reader._file_device_and_inode_string = '123g456'
-            self.assertEqual(reader._get_progress_string(), 'log.log 123g456 10 19')
+            self.assertEqual(reader._make_progress_string(), 'log.log 123g456 10 19')
 
-    def test_get_progress_string_failure(self):
+    def test_make_progress_string_failure(self):
         reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
         reader._file_device_and_inode_string = '123g456'
-        result = reader._get_progress_string()
+        result = reader._make_progress_string()
         self.assertEqual(result, None)
         self.assertEqual(self.fake_logging.exception_messages, ['Failed to gather progress information for log.log.'])
 

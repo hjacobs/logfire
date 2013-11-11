@@ -251,7 +251,7 @@ class LogReader(Thread):
         left off in case it is terminated.
         """
 
-        progress = self._get_progress_string()
+        progress = self._make_progress_string()
         if progress:
             logging.debug('Writing sincedb entry "%s".', progress)
             try:
@@ -269,8 +269,8 @@ class LogReader(Thread):
             filename, device_and_inode_string, position, size = sincedb_file.read().rsplit(None, 3)
             return filename, device_and_inode_string, int(position), int(size)
 
-    def _get_progress_string(self):
-        """Returns the sincedb string for the progress of the file the reader is responsible for."""
+    def _make_progress_string(self):
+        """Constructs a sincedb string that expresses the progress of the reader."""
 
         try:
             position = self._file.tell()
