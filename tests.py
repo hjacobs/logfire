@@ -290,6 +290,21 @@ class LogReaderTests(TestCase):
             self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
             self.assertEqual(reader.receiver.entries[30], 'EOF 0')        
 
+    def test_run_seek_tail_none(self):
+        with prepared_reader(seconds=range(60)) as reader:
+            reader.tail = None
+            reader.run()
+            self.assertEqual(len(reader.receiver.entries), 61)
+            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[60], 'EOF 0')        
+
+    def test_run_seek_tail_zero(self):
+        with prepared_reader(seconds=range(60)) as reader:
+            reader.tail = 0
+            reader.run()
+            self.assertEqual(len(reader.receiver.entries), 1)
+            self.assertEqual(reader.receiver.entries[0], 'EOF 0')   
+
     def test_run_seek_sincedb_position(self):
         self.write_sincedb_file('log.log 123g456 2250 2250')
         with prepared_reader(seconds=range(60)) as reader:

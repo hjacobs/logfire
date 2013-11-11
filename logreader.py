@@ -20,7 +20,7 @@ class LogReader(Thread):
         fname,
         parser,
         receiver,
-        tail=0,
+        tail=None,
         follow=False,
         filterdef=None,
         sincedb=None,
@@ -115,6 +115,8 @@ class LogReader(Thread):
 
         if self._full_sincedb_path:
             self._seek_sincedb_position()
+        elif self.tail == 0:
+            self._file.seek(0, os.SEEK_END)
         elif self.tail:
             self._seek_tail()
         elif self.filterdef.time_from:
