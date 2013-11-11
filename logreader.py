@@ -53,7 +53,7 @@ class LogReader(Thread):
         elif self.tail:
             self._seek_tail()
         elif self.filterdef.time_from:
-            self._seek_time()
+            self._seek_time(self.filterdef.time_from)
 
     def _seek_sincedb_position(self):
         try:
@@ -147,23 +147,27 @@ class LogReader(Thread):
         seek_time_in_chunk(target_chunk_index)
 
     def run(self):
+        """Implements the reader's main loop. Called when the thread is started."""
+
         self._open_file()
         self.parser.autoconfigure(self._file)
         self._seek_position()
 
         # Performance!
         fid = self.fid
+        logfile = self._file
         receiver = self.receiver
-        filt = self.filterdef
+        logfilter = self.filterdef
 
         while True:
             entry_count = 0
-            for entry in self.parser.read(fid, self._file):
-                if filt.matches(entry):
+            for entry in self.parser.read(fid, logfile):
+                if logfilter.matches(entry):
                     receiver.add(entry)
                 entry_count += 1
                 if entry_count & 1023 == 0:
                     self._maybe_do_housekeeping(time.time())
+
             if not self.follow:
                 receiver.eof(fid)
                 break
@@ -247,7 +251,7 @@ class LogReader(Thread):
 
     def _save_progress(self):
         """
-        Saves the the reader's progress infotmation to a file, so that the application can resume reading where it
+        Saves the the reader's progress information to a file, so that the application can resume reading where it
         left off in case it is terminated.
         """
 

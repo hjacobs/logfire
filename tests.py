@@ -245,7 +245,7 @@ class LogReaderTests(TestCase):
         self.write_log_file('XXXX\n' * 100)
         self.write_sincedb_file('log.log 123g456 50 75')
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 50)
@@ -254,7 +254,7 @@ class LogReaderTests(TestCase):
     def test_seek_sincedb_position_no_sincedb(self):
         self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db', tail=10)
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db', tail=10)
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 0)
@@ -263,7 +263,7 @@ class LogReaderTests(TestCase):
     def test_seek_tail_not_enough_lines(self):
         self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 10)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=20)
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=20)
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 0)
@@ -271,7 +271,7 @@ class LogReaderTests(TestCase):
     def test_seek_tail_one_chunk(self):
         self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=10)
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=10)
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 10 * 75)
@@ -279,7 +279,7 @@ class LogReaderTests(TestCase):
     def test_seek_tail_multiple_chunks(self):
         self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 1000)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=900)
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=900)
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 100 * 75)
@@ -288,7 +288,7 @@ class LogReaderTests(TestCase):
         message = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' + 'X' * 24 + '\n'
         self.write_log_file(message * 10)
         with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', tail=5)
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=5)
             reader._file = f
             reader._seek_position()
             self.assertEqual(f.tell(), 5 * 100)
@@ -348,12 +348,77 @@ class LogReaderTests(TestCase):
             reader._seek_time('2000-01-01 00:01:30,000')
             self.assertEqual(reader._file.tell(), 60 * 200)
 
+    ### tests for _run() ###
+
+    def test_run_some_entries(self):
+        housekeeping_timestamps = []
+        with prepared_reader(seconds=range(60)) as reader:
+            reader._maybe_do_housekeeping = lambda current_timestamp: housekeeping_timestamps.append(current_timestamp)
+            reader.run()
+            self.assertEqual(len(reader.receiver.entries), 61)
+            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[60], 'EOF 0')
+            self.assertEqual(len(housekeeping_timestamps), 0)
+
+    def test_run_lots_of_entries(self):
+        housekeeping_timestamps = []
+        with prepared_reader(seconds=range(3000)) as reader:
+            reader._maybe_do_housekeeping = lambda current_timestamp: housekeeping_timestamps.append(current_timestamp)
+            reader.run()
+            self.assertEqual(len(reader.receiver.entries), 3001)
+            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[3000], 'EOF 0')
+            self.assertEqual(len(housekeeping_timestamps), 2)
+
+    def test_run_no_entries_follow(self):
+        with prepared_reader(seconds=range(0)) as reader:
+            reader.follow = True
+            reader._maybe_do_housekeeping = lambda current_timestamp: 1/0
+            reader.parser.autoconfigure = lambda logfile: None
+            self.assertRaises(ZeroDivisionError, reader.run)
+            self.assertEqual(len(reader.receiver.entries), 0)
+
+    def test_run_some_entries_follow(self):
+        with prepared_reader(seconds=range(60)) as reader:
+            reader.follow = True
+            reader._maybe_do_housekeeping = lambda current_timestamp: 1/0
+            self.assertRaises(ZeroDivisionError, reader.run)
+            self.assertEqual(len(reader.receiver.entries), 60)
+            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[59].ts, '2000-01-01 00:00:59,000')
+
+    def test_run_seek_tail(self):
+        with prepared_reader(seconds=range(60)) as reader:
+            reader.tail = 30
+            reader.run()
+            self.assertEqual(len(reader.receiver.entries), 31)
+            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
+            self.assertEqual(reader.receiver.entries[30], 'EOF 0')        
+
+    def test_run_seek_sincedb_position(self):
+        self.write_sincedb_file('log.log 123g456 2250 2250')
+        with prepared_reader(seconds=range(60)) as reader:
+            reader._full_sincedb_path = 'since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'
+            reader.run()
+            self.assertEqual(len(reader.receiver.entries), 31)
+            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
+            self.assertEqual(reader.receiver.entries[30], 'EOF 0')
+
+    def test_run_seek_time(self):
+        with prepared_reader(seconds=range(60)) as reader:
+            reader.filterdef.time_from = '2000-01-01 00:00:30,000'
+            reader.run()
+            self.assertEqual(len(reader.receiver.entries), 31)
+            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
+            self.assertEqual(reader.receiver.entries[30], 'EOF 0')
+
+
     ### tests for _open_file() ###
 
     def test_open_file_with_regular_file(self):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
         reader._open_file()
         try:
             self.assertEqual(reader._file.name, 'log.log')
@@ -367,7 +432,7 @@ class LogReaderTests(TestCase):
         self.files_to_delete.append('log.gz')
         with gzip.open('log.gz', 'wb') as f:
             f.write('Some file contents!')
-        reader = LogReader(0, 'log.gz', Log4jParser(), 'DUMMY RECEIVER')
+        reader = LogReader(0, 'log.gz', Log4jParser(), FakeReceiver())
         reader._open_file()
         try:
             self.assertEqual(reader._file.name, 'log.gz')
@@ -378,7 +443,7 @@ class LogReaderTests(TestCase):
             reader._file.close()
 
     def test_open_file_with_nonexistent_file(self):
-        reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
+        reader = LogReader(0, 'no.such.file', Log4jParser(), FakeReceiver())
         self.assertRaises(IOError, reader._open_file)
 
     ### tests for _close_file() ###
@@ -386,7 +451,7 @@ class LogReaderTests(TestCase):
     def test_close_file(self):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
         reader._open_file()
         f = reader._file
         reader._close_file()
@@ -397,7 +462,7 @@ class LogReaderTests(TestCase):
 
     def test_maybe_do_housekeeping_first_time(self):
         called = []
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
         reader._maybe_do_housekeeping(23)
@@ -407,7 +472,7 @@ class LogReaderTests(TestCase):
 
     def test_maybe_do_housekeeping_second_time_too_early(self):
         called = []
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
         reader._last_ensure_file_is_good_call_timestamp = 23
@@ -419,7 +484,7 @@ class LogReaderTests(TestCase):
 
     def test_maybe_do_housekeeping_second_time_late_enough(self):
         called = []
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
         reader._last_ensure_file_is_good_call_timestamp = 23
@@ -432,14 +497,14 @@ class LogReaderTests(TestCase):
     ### tests for _ensure_file_is_good() ###
 
     def test_ensure_file_is_good_file_does_not_exist(self):
-        reader = LogReader(0, 'no.such.file', Log4jParser(), 'DUMMY RECEIVER')
+        reader = LogReader(0, 'no.such.file', Log4jParser(), FakeReceiver())
         reader._ensure_file_is_good()
         self.assertEqual(self.fake_logging.infos, ['The file no.such.file has been removed.'])
 
     def test_ensure_file_is_good_file_has_been_rotated(self):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
             reader._file = f
             reader._file_device_and_inode_string = 'not matching'
             reader._ensure_file_is_good()
@@ -452,7 +517,7 @@ class LogReaderTests(TestCase):
     def test_ensure_file_is_good_file_has_been_truncated(self):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
             reader._file = f
             reader._file_device_and_inode_string = get_device_and_inode_string(os.fstat(f.fileno()))
             f.truncate(0) 
@@ -466,7 +531,7 @@ class LogReaderTests(TestCase):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
             f.seek(10)
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
             reader._file = f
             reader._file_device_and_inode_string = get_device_and_inode_string(os.fstat(f.fileno()))
             reader._ensure_file_is_good()
@@ -479,20 +544,20 @@ class LogReaderTests(TestCase):
 
     def test_save_progress_success(self):
         self.files_to_delete.append('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794')
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         reader._make_progress_string = lambda: 'log.log 123g456 10 19'
         reader._save_progress()
         with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'rb') as f:
             self.assertEqual(f.read(), 'log.log 123g456 10 19')        
 
     def test_save_progress_no_data(self):
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         reader._make_progress_string = lambda: None
         reader._save_progress()
         self.assertFalse(os.path.exists('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'))
 
     def test_save_progress_failure(self):
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='invalid\0path')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='invalid\0path')
         reader._make_progress_string = lambda: 'log.log 123g456 10 19'
         reader._save_progress()
         self.assertFalse(os.path.exists('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794'))
@@ -502,14 +567,14 @@ class LogReaderTests(TestCase):
 
     def test_load_progress_basic(self):
         self.write_sincedb_file('log.log 123g456 50 75')
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         self.assertEqual(reader._load_progress(), ('log.log', '123g456', 50, 75))
 
     def test_load_progress_with_spaces_in_filename(self):
         self.files_to_delete.append('since.dbf4a53d67a02158bcc92d7d702a8f438ad18309488')
         with open('since.dbf4a53d67a02158bcc92d7d702a8f438ad18309488', 'wb') as f:
             f.write('log with spaces in name.log 123g456 50 75')
-        reader = LogReader(0, 'log with spaces in name.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log with spaces in name.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         self.assertEqual(reader._load_progress(), ('log with spaces in name.log', '123g456', 50, 75))
 
     ### tests for _make_progress_string() ###
@@ -518,13 +583,13 @@ class LogReaderTests(TestCase):
         with open('log.log', 'wb') as f:
             f.write('Some file contents!')
             f.seek(10)
-            reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
             reader._file = f
             reader._file_device_and_inode_string = '123g456'
             self.assertEqual(reader._make_progress_string(), 'log.log 123g456 10 19')
 
     def test_make_progress_string_failure(self):
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER', sincedb='since.db')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
         reader._file_device_and_inode_string = '123g456'
         result = reader._make_progress_string()
         self.assertEqual(result, None)
@@ -540,6 +605,17 @@ class LogReaderTests(TestCase):
         with open('since.dbf16c93d1167446f99a26837c0fdeac6fb73869794', 'wb') as f:
             f.write(contents)
 
+
+class FakeReceiver(object):
+
+    def __init__(self):
+        self.entries = []
+
+    def add(self, entry):
+        self.entries.append(entry)
+
+    def eof(self, fid):
+        self.entries.append('EOF {0}'.format(fid))
 
 
 class prepared_reader(object):
@@ -559,7 +635,7 @@ class prepared_reader(object):
         with open('log.log', 'wb') as f:
             f.write(''.join(lines))
         self.log = open('log.log', 'rb')
-        reader = LogReader(0, 'log.log', Log4jParser(), 'DUMMY RECEIVER')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
         reader._file = self.log
         return reader
 
