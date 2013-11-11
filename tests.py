@@ -8,8 +8,8 @@ import sys
 
 import logfire
 import logreader
-from logfire import Log4jParser, LogLevel
-from logreader import LogReader, get_device_and_inode_string
+from logfire import Log4jParser, LogLevel, LogEntry
+from logreader import LogReader, LogFilter, get_device_and_inode_string
 
 
 class Log4jParserTests(TestCase):
@@ -630,6 +630,7 @@ class LogReaderTests(TestCase):
         self.assertEqual(result, None)
         self.assertEqual(self.fake_logging.exception_messages, ['Failed to gather progress information for log.log.'])
 
+    ### utility methods ###
 
     def write_log_file(self, *lines):
         with open('log.log', 'wb') as f:
@@ -639,6 +640,33 @@ class LogReaderTests(TestCase):
         self.files_to_delete.append('progressf16c93d1167446f99a26837c0fdeac6fb73869794')
         with open('progressf16c93d1167446f99a26837c0fdeac6fb73869794', 'wb') as f:
             f.write(contents)
+
+
+class LogFilterTests(TestCase):
+
+    def test_filter_by_level(self):
+        log_filter = LogFilter(levels=(LogLevel.DEBUG, LogLevel.FATAL))
+        self.assertTrue(log_filter.matches(LogEntry(0, 0, 0, 0, LogLevel.DEBUG, 0, 0, 0, 0, 0, 0)))
+        self.assertTrue(log_filter.matches(LogEntry(0, 0, 0, 0, LogLevel.FATAL, 0, 0, 0, 0, 0, 0)))
+        self.assertFalse(log_filter.matches(LogEntry(0, 0, 0, 0, LogLevel.INFO, 0, 0, 0, 0, 0, 0)))
+
+    def test_filter_by_grep(self):
+        log_filter = LogFilter(grep='broken')
+        self.assertTrue(log_filter.matches(LogEntry(0, 0, 0, 0, 0, 0, 'UnbrokenThingDoer', 0, 0, 0, 'Error!')))
+        self.assertTrue(log_filter.matches(LogEntry(0, 0, 0, 0, 0, 0, 'SomeClass', 0, 0, 0, 'Stuff is broken!')))
+        self.assertFalse(log_filter.matches(LogEntry(0, 0, 0, 0, 0, 0, 'BrokenThingDoer', 0, 0, 0, 'Error!')))
+
+    def test_filter_by_time_from(self):
+        log_filter = LogFilter(time_from='2000-01-01 00:30:00,000')
+        self.assertTrue(log_filter.matches(LogEntry('2000-01-01 00:30:00,000', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+        self.assertTrue(log_filter.matches(LogEntry('2000-01-01 01:00:00,000', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+        self.assertFalse(log_filter.matches(LogEntry('2000-01-01 00:15:00,000', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+
+    def test_filter_by_time_to(self):
+        log_filter = LogFilter(time_to='2000-01-01 00:30:00,000')
+        self.assertTrue(log_filter.matches(LogEntry('2000-01-01 00:15:00,000', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+        self.assertFalse(log_filter.matches(LogEntry('2000-01-01 00:30:00,000', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+        self.assertFalse(log_filter.matches(LogEntry('2000-01-01 00:45:00,000', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
 
 
 class FakeReceiver(object):

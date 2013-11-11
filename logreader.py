@@ -299,16 +299,16 @@ class LogReader(threading.Thread):
 
 class LogFilter(object):
 
-    def __init__(self):
-        self.levels = set()
-        self.grep = None
-        self.time_from = None
-        self.time_to = None
+    def __init__(self, levels=(), grep=None, time_from=None, time_to=None):
+        self.levels = set(levels)
+        self.grep = grep
+        self.time_from = time_from
+        self.time_to = time_to
 
     def matches(self, entry):
         ok = not self.levels or entry.level in self.levels
         if ok and self.grep:
-            ok = self.grep in entry.message or self.grep in entry.source_class
+            ok = self.grep in entry.message or self.grep in entry.clazz
         if ok and self.time_from:
             ok = entry.ts >= self.time_from
         if ok and self.time_to:
