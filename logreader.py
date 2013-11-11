@@ -11,6 +11,9 @@ from threading import Thread
 
 class LogReader(Thread):
 
+    NO_ENTRIES_SLEEP_INTERVAL = 0.1  # seconds
+    CHUNK_SIZE = 1024  # bytes
+
     def __init__(
         self,
         fid,
@@ -71,7 +74,7 @@ class LogReader(Thread):
                 receiver.eof(fid)
                 break
             if entry_count == 0:
-                time.sleep(0.1)
+                time.sleep(self.NO_ENTRIES_SLEEP_INTERVAL)
                 self._maybe_do_housekeeping(time.time())
 
     ### FILES ###
@@ -124,18 +127,17 @@ class LogReader(Thread):
             self._file.seek(last_position)
 
     def _seek_tail(self):
-        chunk_size = 1024
         file_size = os.fstat(self._file.fileno()).st_size
-        chunk_count = (file_size // chunk_size) + bool(file_size % chunk_size)
+        chunk_count = (file_size // self.CHUNK_SIZE) + bool(file_size % self.CHUNK_SIZE)
 
         chunk = ''
         newline_count = 0
         previous_newline_position = None
 
         for iteration, chunk_index in enumerate(reversed(range(chunk_count))):
-            self._file.seek(chunk_size * chunk_index)
+            self._file.seek(self.CHUNK_SIZE * chunk_index)
             line_tail = chunk[:previous_newline_position]
-            chunk = self._file.read(chunk_size) + line_tail
+            chunk = self._file.read(self.CHUNK_SIZE) + line_tail
 
             if iteration == 0:
                 previous_newline_position = chunk.rfind('\n')
@@ -150,7 +152,7 @@ class LogReader(Thread):
                 if not self.parser.is_continuation_line(line):
                     newline_count += 1
                     if newline_count >= self.tail:
-                        self._file.seek(chunk_index * chunk_size + current_newline_position + 1)
+                        self._file.seek(chunk_index * self.CHUNK_SIZE + current_newline_position + 1)
                         return    
 
                 previous_newline_position = current_newline_position
@@ -172,7 +174,7 @@ class LogReader(Thread):
                     return binary_chunk_search(pivot_index, stop_index)
 
         def get_first_timestamp_in_chunk(chunk_index):
-            self._file.seek(chunk_size * chunk_index)
+            self._file.seek(self.CHUNK_SIZE * chunk_index)
             line = self._file.readline()
             while line and self.parser.is_continuation_line(line):
                 line = self._file.readline()
@@ -182,7 +184,7 @@ class LogReader(Thread):
                 return 'greater than any time string'
 
         def seek_time_in_chunk(chunk_index):
-            self._file.seek(chunk_index * chunk_size)
+            self._file.seek(chunk_index * self.CHUNK_SIZE)
 
             while True:
                 line = self._file.readline()
@@ -197,9 +199,8 @@ class LogReader(Thread):
                     self._file.seek(0, os.SEEK_END)
                     return
 
-        chunk_size = 1024
         file_size = os.fstat(self._file.fileno()).st_size
-        chunk_count = (file_size // chunk_size) + bool(file_size % chunk_size)
+        chunk_count = (file_size // self.CHUNK_SIZE) + bool(file_size % self.CHUNK_SIZE)
 
         target_chunk_index = binary_chunk_search(0, chunk_count + 1)
         seek_time_in_chunk(target_chunk_index)

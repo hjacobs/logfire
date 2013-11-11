@@ -266,6 +266,7 @@ class LogReaderTests(TestCase):
     def test_run_no_entries_follow(self):
         with prepared_reader(seconds=range(0)) as reader:
             reader.follow = True
+            reader.NO_ENTRIES_SLEEP_INTERVAL = 0
             reader._maybe_do_housekeeping = lambda current_timestamp: 1/0
             reader.parser.autoconfigure = lambda logfile: None
             self.assertRaises(ZeroDivisionError, reader.run)
@@ -274,6 +275,7 @@ class LogReaderTests(TestCase):
     def test_run_some_entries_follow(self):
         with prepared_reader(seconds=range(60)) as reader:
             reader.follow = True
+            reader.NO_ENTRIES_SLEEP_INTERVAL = 0
             reader._maybe_do_housekeeping = lambda current_timestamp: 1/0
             self.assertRaises(ZeroDivisionError, reader.run)
             self.assertEqual(len(reader.receiver.entries), 60)
@@ -385,6 +387,7 @@ class LogReaderTests(TestCase):
         self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
         with open('log.log', 'rb') as f:
             reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=10)
+            reader.CHUNK_SIZE = 1024
             reader._file = f
             reader._seek_tail()
             self.assertEqual(f.tell(), 10 * 75)
@@ -393,6 +396,7 @@ class LogReaderTests(TestCase):
         self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 1000)
         with open('log.log', 'rb') as f:
             reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=900)
+            reader.CHUNK_SIZE = 1024
             reader._file = f
             reader._seek_tail()
             self.assertEqual(f.tell(), 100 * 75)
@@ -402,6 +406,7 @@ class LogReaderTests(TestCase):
         self.write_log_file(message * 10)
         with open('log.log', 'rb') as f:
             reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=5)
+            reader.CHUNK_SIZE = 1024
             reader._file = f
             reader._seek_tail()
             self.assertEqual(f.tell(), 5 * 100)
@@ -415,51 +420,61 @@ class LogReaderTests(TestCase):
 
     def test_seek_time_one_chunk_exact_match(self):
         with prepared_reader(seconds=range(10)) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:05,000')
             self.assertEqual(reader._file.tell(), 5 * 75)
 
     def test_seek_time_one_chunk_first_line_exact_match(self):
         with prepared_reader(seconds=range(10)) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:00,000')
             self.assertEqual(reader._file.tell(), 0)
 
     def test_seek_time_one_chunk_last_line_exact_match(self):
         with prepared_reader(seconds=range(10)) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:09,000')
             self.assertEqual(reader._file.tell(), 9 * 75)
 
     def test_seek_time_one_chunk_between_lines(self):
         with prepared_reader(seconds=range(0, 20, 2)) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:15,000')
             self.assertEqual(reader._file.tell(), 8 * 75)
 
     def test_seek_time_one_chunk_before_file(self):
         with prepared_reader(seconds=range(10, 20)) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:05,000')
             self.assertEqual(reader._file.tell(), 0)
 
     def test_seek_time_one_chunk_after_file(self):
         with prepared_reader(seconds=range(10)) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:12,000')
             self.assertEqual(reader._file.tell(), 10 * 75)
 
     def test_seek_time_continuation_lines_excact_match(self):
         with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:30,000')
             self.assertEqual(reader._file.tell(), 30 * 200)
 
     def test_seek_time_continuation_lines_between_lines(self):
         with prepared_reader(seconds=range(0, 60, 2), continuation_line_count=5) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:31,000')
             self.assertEqual(reader._file.tell(), 16 * 200)
 
     def test_seek_time_continuation_lines_before_file(self):
         with prepared_reader(seconds=range(60, 120), continuation_line_count=5) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:00:30,000')
             self.assertEqual(reader._file.tell(), 0)
 
     def test_seek_time_continuation_lines_after_file(self):
         with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
+            reader.CHUNK_SIZE = 1024
             reader._seek_time('2000-01-01 00:01:30,000')
             self.assertEqual(reader._file.tell(), 60 * 200)
 
