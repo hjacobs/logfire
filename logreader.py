@@ -108,7 +108,11 @@ class LogReader(Thread):
     ### SEEKING ###
 
     def _seek_position(self):
-        """seek to start of "tail" (last n lines)"""
+        """
+        Seeks to the start position of the file the reader is responsible for. Depending on the reader's configuration,
+        dispatches to _seek_sincedb_position(), _seek_tail(), or _seek_time().
+        """
+
         if self._full_sincedb_path:
             self._seek_sincedb_position()
         elif self.tail:
@@ -117,6 +121,8 @@ class LogReader(Thread):
             self._seek_time(self.filterdef.time_from)
 
     def _seek_sincedb_position(self):
+        """Loads the last file position from the file given by _full_sincedb_path and seeks to that position."""
+
         try:
             _, device_and_inode_string, last_position, _ = self._load_progress()
         except Exception:
@@ -127,6 +133,8 @@ class LogReader(Thread):
             self._file.seek(last_position)
 
     def _seek_tail(self):
+        """Seeks to the beginning of the Nth entry (not line!) from the end, where N is given by tail."""
+
         file_size = os.fstat(self._file.fileno()).st_size
         chunk_count = (file_size // self.CHUNK_SIZE) + bool(file_size % self.CHUNK_SIZE)
 
@@ -161,7 +169,7 @@ class LogReader(Thread):
             self._file.seek(0)
 
     def _seek_time(self, time_string):
-        """try to seek to our start time"""
+        """Seeks to the beginning of the first entry with a timestamp greater than or equal to the given one."""
 
         def binary_chunk_search(start_index, stop_index):
             if start_index + 1 == stop_index:
@@ -305,6 +313,7 @@ class LogFilter(object):
             ok = entry.ts < self.time_to
 
         return ok
+
 
 def get_device_and_inode_string(st):
     return '%xg%x' % (st.st_dev, st.st_ino)
