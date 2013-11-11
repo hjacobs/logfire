@@ -45,6 +45,64 @@ class LogReader(Thread):
         else:
             self._full_sincedb_path = None
 
+    def run(self):
+        """Implements the reader's main loop. Called when the thread is started."""
+
+        self._open_file()
+        self.parser.autoconfigure(self._file)
+        self._seek_position()
+
+        # Performance!
+        fid = self.fid
+        logfile = self._file
+        receiver = self.receiver
+        logfilter = self.filterdef
+
+        while True:
+            entry_count = 0
+            for entry in self.parser.read(fid, logfile):
+                if logfilter.matches(entry):
+                    receiver.add(entry)
+                entry_count += 1
+                if entry_count & 1023 == 0:
+                    self._maybe_do_housekeeping(time.time())
+
+            if not self.follow:
+                receiver.eof(fid)
+                break
+            if entry_count == 0:
+                time.sleep(0.1)
+                self._maybe_do_housekeeping(time.time())
+
+    ### FILES ###
+
+    def _open_file(self):
+        """
+        Opens the file the LogReader is responsible for and assigns it to _file. If that file has the extension ".gz",
+        it is opened as a gzip file. Errors are propagated.
+        """
+
+        try:
+            if self._filename.endswith('.gz'):
+                self._file = gzip.open(self._filename, 'rb')
+            else:
+                self._file = io.open(self._filename, 'rb')
+            logging.info('Opened %s.', self._filename)
+        except IOError:
+            logging.exception('Failed to open %s.', self._filename)
+            raise
+        else:
+            self._file_device_and_inode_string = get_device_and_inode_string(os.fstat(self._file.fileno()))
+
+    def _close_file(self):
+        """Closes the file the LogReader is responsible for and sets _file to None."""
+
+        if self._file:
+            self._file.close()
+            self._file = None
+            logging.info('Closed %s.' % self._filename)
+
+    ### SEEKING ###
 
     def _seek_position(self):
         """seek to start of "tail" (last n lines)"""
@@ -145,63 +203,6 @@ class LogReader(Thread):
 
         target_chunk_index = binary_chunk_search(0, chunk_count + 1)
         seek_time_in_chunk(target_chunk_index)
-
-    def run(self):
-        """Implements the reader's main loop. Called when the thread is started."""
-
-        self._open_file()
-        self.parser.autoconfigure(self._file)
-        self._seek_position()
-
-        # Performance!
-        fid = self.fid
-        logfile = self._file
-        receiver = self.receiver
-        logfilter = self.filterdef
-
-        while True:
-            entry_count = 0
-            for entry in self.parser.read(fid, logfile):
-                if logfilter.matches(entry):
-                    receiver.add(entry)
-                entry_count += 1
-                if entry_count & 1023 == 0:
-                    self._maybe_do_housekeeping(time.time())
-
-            if not self.follow:
-                receiver.eof(fid)
-                break
-            if entry_count == 0:
-                time.sleep(0.1)
-                self._maybe_do_housekeeping(time.time())
-
-    ### FILES ###
-
-    def _open_file(self):
-        """
-        Opens the file the LogReader is responsible for and assigns it to _file. If that file has the extension ".gz",
-        it is opened as a gzip file. Errors are propagated.
-        """
-
-        try:
-            if self._filename.endswith('.gz'):
-                self._file = gzip.open(self._filename, 'rb')
-            else:
-                self._file = io.open(self._filename, 'rb')
-            logging.info('Opened %s.', self._filename)
-        except IOError:
-            logging.exception('Failed to open %s.', self._filename)
-            raise
-        else:
-            self._file_device_and_inode_string = get_device_and_inode_string(os.fstat(self._file.fileno()))
-
-    def _close_file(self):
-        """Closes the file the LogReader is responsible for and sets _file to None."""
-
-        if self._file:
-            self._file.close()
-            self._file = None
-            logging.info('Closed %s.' % self._filename)
 
     ### HOUSEKEEPING ###
 

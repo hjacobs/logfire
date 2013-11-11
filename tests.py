@@ -241,113 +241,6 @@ class LogReaderTests(TestCase):
             except OSError:
                 pass
 
-    def test_seek_sincedb_position(self):
-        self.write_log_file('XXXX\n' * 100)
-        self.write_sincedb_file('log.log 123g456 50 75')
-        with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
-            reader._file = f
-            reader._seek_position()
-            self.assertEqual(f.tell(), 50)
-            self.assertEqual(reader._file_device_and_inode_string, '123g456')
-
-    def test_seek_sincedb_position_no_sincedb(self):
-        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
-        with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db', tail=10)
-            reader._file = f
-            reader._seek_position()
-            self.assertEqual(f.tell(), 0)
-            self.assertEqual(self.fake_logging.warnings, ['Failed to read the sincedb file for "log.log".'])
-
-    def test_seek_tail_not_enough_lines(self):
-        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 10)
-        with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=20)
-            reader._file = f
-            reader._seek_position()
-            self.assertEqual(f.tell(), 0)
-
-    def test_seek_tail_one_chunk(self):
-        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
-        with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=10)
-            reader._file = f
-            reader._seek_position()
-            self.assertEqual(f.tell(), 10 * 75)
-
-    def test_seek_tail_multiple_chunks(self):
-        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 1000)
-        with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=900)
-            reader._file = f
-            reader._seek_position()
-            self.assertEqual(f.tell(), 100 * 75)
-
-    def test_seek_tail_with_multiline_messages_one_chunk(self):
-        message = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' + 'X' * 24 + '\n'
-        self.write_log_file(message * 10)
-        with open('log.log', 'rb') as f:
-            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=5)
-            reader._file = f
-            reader._seek_position()
-            self.assertEqual(f.tell(), 5 * 100)
-
-    def test_seek_time_in_empty_file(self):
-        with prepared_reader(seconds=()) as reader:
-            reader._seek_time('2000-01-01 00:00:00,000')
-            self.assertEqual(reader._file.tell(), 0)
-
-    def test_seek_time_one_chunk_exact_match(self):
-        with prepared_reader(seconds=range(10)) as reader:
-            reader._seek_time('2000-01-01 00:00:05,000')
-            self.assertEqual(reader._file.tell(), 5 * 75)
-
-    def test_seek_time_one_chunk_first_line_exact_match(self):
-        with prepared_reader(seconds=range(10)) as reader:
-            reader._seek_time('2000-01-01 00:00:00,000')
-            self.assertEqual(reader._file.tell(), 0)
-
-    def test_seek_time_one_chunk_last_line_exact_match(self):
-        with prepared_reader(seconds=range(10)) as reader:
-            reader._seek_time('2000-01-01 00:00:09,000')
-            self.assertEqual(reader._file.tell(), 9 * 75)
-
-    def test_seek_time_one_chunk_between_lines(self):
-        with prepared_reader(seconds=range(0, 20, 2)) as reader:
-            reader._seek_time('2000-01-01 00:00:15,000')
-            self.assertEqual(reader._file.tell(), 8 * 75)
-
-    def test_seek_time_one_chunk_before_file(self):
-        with prepared_reader(seconds=range(10, 20)) as reader:
-            reader._seek_time('2000-01-01 00:00:05,000')
-            self.assertEqual(reader._file.tell(), 0)
-
-    def test_seek_time_one_chunk_after_file(self):
-        with prepared_reader(seconds=range(10)) as reader:
-            reader._seek_time('2000-01-01 00:00:12,000')
-            self.assertEqual(reader._file.tell(), 10 * 75)
-
-    def test_seek_time_continuation_lines_excact_match(self):
-        with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
-            reader._seek_time('2000-01-01 00:00:30,000')
-            self.assertEqual(reader._file.tell(), 30 * 200)
-
-    def test_seek_time_continuation_lines_between_lines(self):
-        with prepared_reader(seconds=range(0, 60, 2), continuation_line_count=5) as reader:
-            reader._seek_time('2000-01-01 00:00:31,000')
-            self.assertEqual(reader._file.tell(), 16 * 200)
-
-    def test_seek_time_continuation_lines_before_file(self):
-        with prepared_reader(seconds=range(60, 120), continuation_line_count=5) as reader:
-            reader._seek_time('2000-01-01 00:00:30,000')
-            self.assertEqual(reader._file.tell(), 0)
-
-    def test_seek_time_continuation_lines_after_file(self):
-        with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
-            reader._seek_time('2000-01-01 00:01:30,000')
-            self.assertEqual(reader._file.tell(), 60 * 200)
-
     ### tests for _run() ###
 
     def test_run_some_entries(self):
@@ -412,7 +305,6 @@ class LogReaderTests(TestCase):
             self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
             self.assertEqual(reader.receiver.entries[30], 'EOF 0')
 
-
     ### tests for _open_file() ###
 
     def test_open_file_with_regular_file(self):
@@ -457,6 +349,119 @@ class LogReaderTests(TestCase):
         reader._close_file()
         self.assertTrue(f.closed)
         self.assertEqual(reader._file, None)
+
+    ### tests for _seek_sincedb_position() ###
+
+    def test_seek_sincedb_position(self):
+        self.write_log_file('XXXX\n' * 100)
+        self.write_sincedb_file('log.log 123g456 50 75')
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db')
+            reader._file = f
+            reader._seek_sincedb_position()
+            self.assertEqual(f.tell(), 50)
+            self.assertEqual(reader._file_device_and_inode_string, '123g456')
+
+    def test_seek_sincedb_position_no_sincedb(self):
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), sincedb='since.db', tail=10)
+            reader._file = f
+            reader._seek_sincedb_position()
+            self.assertEqual(f.tell(), 0)
+            self.assertEqual(self.fake_logging.warnings, ['Failed to read the sincedb file for "log.log".'])
+
+    ### tests for _seek_tail() ###
+
+    def test_seek_tail_not_enough_lines(self):
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 10)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=20)
+            reader._file = f
+            reader._seek_tail()
+            self.assertEqual(f.tell(), 0)
+
+    def test_seek_tail_one_chunk(self):
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 20)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=10)
+            reader._file = f
+            reader._seek_tail()
+            self.assertEqual(f.tell(), 10 * 75)
+
+    def test_seek_tail_multiple_chunks(self):
+        self.write_log_file('2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' * 1000)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=900)
+            reader._file = f
+            reader._seek_tail()
+            self.assertEqual(f.tell(), 100 * 75)
+
+    def test_seek_tail_with_multiline_messages_one_chunk(self):
+        message = '2000-01-01 00:00:00,000 FlowID ERROR Thread C.m(C.java:23): Error! Nooooo!\n' + 'X' * 24 + '\n'
+        self.write_log_file(message * 10)
+        with open('log.log', 'rb') as f:
+            reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), tail=5)
+            reader._file = f
+            reader._seek_tail()
+            self.assertEqual(f.tell(), 5 * 100)
+
+    ### tests for _seek_time() ###
+
+    def test_seek_time_in_empty_file(self):
+        with prepared_reader(seconds=()) as reader:
+            reader._seek_time('2000-01-01 00:00:00,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_one_chunk_exact_match(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:05,000')
+            self.assertEqual(reader._file.tell(), 5 * 75)
+
+    def test_seek_time_one_chunk_first_line_exact_match(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:00,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_one_chunk_last_line_exact_match(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:09,000')
+            self.assertEqual(reader._file.tell(), 9 * 75)
+
+    def test_seek_time_one_chunk_between_lines(self):
+        with prepared_reader(seconds=range(0, 20, 2)) as reader:
+            reader._seek_time('2000-01-01 00:00:15,000')
+            self.assertEqual(reader._file.tell(), 8 * 75)
+
+    def test_seek_time_one_chunk_before_file(self):
+        with prepared_reader(seconds=range(10, 20)) as reader:
+            reader._seek_time('2000-01-01 00:00:05,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_one_chunk_after_file(self):
+        with prepared_reader(seconds=range(10)) as reader:
+            reader._seek_time('2000-01-01 00:00:12,000')
+            self.assertEqual(reader._file.tell(), 10 * 75)
+
+    def test_seek_time_continuation_lines_excact_match(self):
+        with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:00:30,000')
+            self.assertEqual(reader._file.tell(), 30 * 200)
+
+    def test_seek_time_continuation_lines_between_lines(self):
+        with prepared_reader(seconds=range(0, 60, 2), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:00:31,000')
+            self.assertEqual(reader._file.tell(), 16 * 200)
+
+    def test_seek_time_continuation_lines_before_file(self):
+        with prepared_reader(seconds=range(60, 120), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:00:30,000')
+            self.assertEqual(reader._file.tell(), 0)
+
+    def test_seek_time_continuation_lines_after_file(self):
+        with prepared_reader(seconds=range(60), continuation_line_count=5) as reader:
+            reader._seek_time('2000-01-01 00:01:30,000')
+            self.assertEqual(reader._file.tell(), 60 * 200)
 
     ### tests for _maybe_do_housekeeping() ###
 
