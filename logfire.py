@@ -330,7 +330,7 @@ class NonOrderedLogAggregator(object):
     def eof(self, fid):
         self.open_files.remove(fid)
 
-    def len(self):
+    def __len__(self):
         return len(self.entries)
 
     def get(self):
@@ -357,6 +357,7 @@ class RedisOutputThread(Thread):
 
     MAX_PING_ATTEMPTS = 20
     CUMULATIVE_PING_DELAY = 1  # seconds
+    WRITE_INTERVAL = 1  # seconds
 
     def __init__(self, aggregator, host, port, namespace):
         Thread.__init__(self, name='RedisOutputThread')
@@ -396,32 +397,28 @@ class RedisOutputThread(Thread):
             sys.exit(1)
 
     def run(self):
-        file_names = self.aggregator.file_names
-
-        total = 0
-        chunk_start = time.time()
-        write_interval = 1
+        file_name_by_id = self.aggregator.file_names
+        chunk_start_timestamp = time.time()
         while True:
-            time.sleep(write_interval)
-            l = self.aggregator.len()
-            if l > 0:
-                i = 0
+            time.sleep(self.WRITE_INTERVAL)
+            chunk_size = len(self.aggregator)
+            if chunk_size > 0:
+                pushed_entry_count = 0
                 for entry in self.aggregator.get():
-                    d = entry.as_logstash()
-                    d['logfile'] = file_names[entry.fid]
-                    self._pipeline.rpush(self._redis_namespace, json.dumps(d))
-                    i += 1
-                    if i > l:
+                    logstash_dict = entry.as_logstash()
+                    logstash_dict['logfile'] = file_name_by_id[entry.fid]
+                    self._pipeline.rpush(self._redis_namespace, json.dumps(logstash_dict))
+                    pushed_entry_count += 1
+                    if pushed_entry_count > chunk_size:
                         break
-                total += i
                 try:
                     self._pipeline.execute()
-                except:
+                except Exception:
                     logging.exception('Redis connection failure')
                 now = time.time()
-                logging.debug('Pushed %s entries (%.1f/s), queue length %s', i, i / (now - chunk_start),
-                              self.aggregator.len())
-                chunk_start = now
+                logging.debug('Pushed %s entries (%.1f/s), queue length %s', pushed_entry_count, pushed_entry_count /
+                              (now - chunk_start_timestamp), len(self.aggregator))
+                chunk_start_timestamp = now
 
 
 class OutputThread(Thread):

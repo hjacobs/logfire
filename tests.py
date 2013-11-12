@@ -8,7 +8,7 @@ import sys
 
 import logfire
 import logreader
-from logfire import Log4jParser, LogLevel, LogEntry, RedisOutputThread
+from logfire import Log4jParser, LogLevel, LogEntry, RedisOutputThread, NonOrderedLogAggregator
 from logreader import LogReader, LogFilter, get_device_and_inode_string
 
 
@@ -700,7 +700,7 @@ class RedisOutputThreadTests(TestCase):
         fake_redis = FakeRedis(ping_fail_count=1, ping_fail_exception=Exception)
         RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
         RedisOutputThread.CUMULATIVE_PING_DELAY = 0.001
-        rot = RedisOutputThread('DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
+        RedisOutputThread('DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
         self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "ping()", "ping()", "pipeline(transaction=False)"])
 
     def test_init_and_connect_with_ping_failure(self):
@@ -714,6 +714,22 @@ class RedisOutputThreadTests(TestCase):
         import redis
         self.assertEqual(RedisOutputThread.import_redis(), redis)
 
+    def test_run(self):
+        fake_redis = FakeRedis(execute_success_count=1)
+        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
+        rot = RedisOutputThread(FakeLogAggregator(), 'host01', 1234, 'NAMESPACE')
+        rot.WRITE_INTERVAL = 0
+        self.assertRaises(SystemExit, rot.run)
+        commands = fake_redis.log
+        self.assertEqual(len(commands), 53)
+        self.assertEqual(commands[0], "StrictRedis('host01', 1234, socket_timeout=10)")
+        self.assertEqual(commands[1], "ping()")
+        self.assertEqual(commands[2], "pipeline(transaction=False)")
+        for block_start in (3, 28):
+            for i in range(block_start, block_start + 24):
+                self.assertTrue(commands[i].startswith("rpush('NAMESPACE', '{"))
+                self.assertTrue('"logfile": "log.log"' in commands[i])
+            self.assertEqual(commands[block_start + 24], "execute()")
 
 
 class FakeReceiver(object):
@@ -728,11 +744,24 @@ class FakeReceiver(object):
         self.entries.append('EOF {0}'.format(fid))
 
 
+class FakeLogAggregator(object):
+
+    file_names = {'123g456': 'log.log'}
+
+    def __len__(self):
+        return 23
+
+    def get(self):
+        while True:
+            yield LogEntry(0, '123g456', 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+
 class FakeRedis(object):
 
-    def __init__(self, ping_fail_count=0, ping_fail_exception=Exception):
+    def __init__(self, execute_success_count=0, ping_fail_count=0, ping_fail_exception=Exception):
         self.log = []
         self.remaining_ping_fail_count = ping_fail_count
+        self.remaining_execute_success_count = execute_success_count
         self.ping_fail_exception = ping_fail_exception
 
     def StrictRedis(self, host, port, socket_timeout=None):
@@ -748,6 +777,15 @@ class FakeRedis(object):
     def pipeline(self, transaction=None):
         self.log.append('pipeline(transaction={0!r})'.format(transaction))
         return self
+
+    def rpush(self, namespace, data):
+        self.log.append('rpush({0!r}, {1!r})'.format(namespace, data))
+
+    def execute(self):
+        self.log.append('execute()')
+        if not self.remaining_execute_success_count:
+            raise SystemExit(0)
+        self.remaining_execute_success_count -= 1
 
 
 class prepared_reader(object):
