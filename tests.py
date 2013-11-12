@@ -8,7 +8,7 @@ import sys
 
 import logfire
 import logreader
-from logfire import Log4jParser, LogLevel, LogEntry
+from logfire import Log4jParser, LogLevel, LogEntry, RedisOutputThread
 from logreader import LogReader, LogFilter, get_device_and_inode_string
 
 
@@ -25,7 +25,7 @@ class Log4jParserTests(TestCase):
         logfire.logging = self.fake_logging
 
     def tearDown(self):
-        logfire.logfire = logging
+        logfire.logging = logging
         self.fake_logging.reset()
 
     def test_autoconfigure_with_thread_and_flow_id(self):
@@ -233,7 +233,7 @@ class LogReaderTests(TestCase):
         self.files_to_delete = ['log.log']
 
     def tearDown(self):
-        logfire.logfire = logging
+        logreader.logfire = logging
         self.fake_logging.reset()
         for f in self.files_to_delete:
             try:
@@ -669,6 +669,53 @@ class LogFilterTests(TestCase):
         self.assertFalse(log_filter.matches(LogEntry('2000-01-01 00:45:00,000', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
 
 
+class RedisOutputThreadTests(TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fake_logging = FakeLogging()
+
+    def setUp(self):
+        logfire.logging = self.fake_logging
+        self.old_import_redis = RedisOutputThread.import_redis
+        self.old_cumulative_ping_delay = RedisOutputThread.CUMULATIVE_PING_DELAY
+
+    def tearDown(self):
+        logfire.logging = logging
+        self.fake_logging.reset()
+        RedisOutputThread.import_redis = staticmethod(self.old_import_redis)
+        RedisOutputThread.CUMULATIVE_PING_DELAY = self.old_cumulative_ping_delay
+
+    def test_init_and_connect(self):
+        fake_redis = FakeRedis()
+        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
+        rot = RedisOutputThread('DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
+        self.assertEqual(rot.aggregator, 'DUMMY AGGREGATOR')
+        self.assertEqual(rot._redis_namespace, 'NAMESPACE')
+        self.assertTrue(rot._redis)
+        self.assertTrue(rot._pipeline)
+        self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "ping()", "pipeline(transaction=False)"])
+
+    def test_init_and_connect_with_ping_exception(self):
+        fake_redis = FakeRedis(ping_fail_count=1, ping_fail_exception=Exception)
+        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
+        RedisOutputThread.CUMULATIVE_PING_DELAY = 0.001
+        rot = RedisOutputThread('DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
+        self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "ping()", "ping()", "pipeline(transaction=False)"])
+
+    def test_init_and_connect_with_ping_failure(self):
+        fake_redis = FakeRedis(ping_fail_count=23, ping_fail_exception=Exception)
+        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
+        RedisOutputThread.CUMULATIVE_PING_DELAY = 0
+        self.assertRaises(SystemExit, RedisOutputThread, 'DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
+        self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)"] + ["ping()"] * 20)
+
+    def test_import_redis(self):
+        import redis
+        self.assertEqual(RedisOutputThread.import_redis(), redis)
+
+
+
 class FakeReceiver(object):
 
     def __init__(self):
@@ -679,6 +726,28 @@ class FakeReceiver(object):
 
     def eof(self, fid):
         self.entries.append('EOF {0}'.format(fid))
+
+
+class FakeRedis(object):
+
+    def __init__(self, ping_fail_count=0, ping_fail_exception=Exception):
+        self.log = []
+        self.remaining_ping_fail_count = ping_fail_count
+        self.ping_fail_exception = ping_fail_exception
+
+    def StrictRedis(self, host, port, socket_timeout=None):
+        self.log.append('StrictRedis({0!r}, {1!r}, socket_timeout={2!r})'.format(host, port, socket_timeout))
+        return self
+
+    def ping(self):
+        self.log.append('ping()')
+        if self.remaining_ping_fail_count:
+            self.remaining_ping_fail_count -= 1
+            raise self.ping_fail_exception()
+
+    def pipeline(self, transaction=None):
+        self.log.append('pipeline(transaction={0!r})'.format(transaction))
+        return self
 
 
 class prepared_reader(object):
@@ -732,6 +801,9 @@ class FakeLogging(object):
         self.exception_messages.append(self.format_message(msg, args))
         self.exception_infos.append(sys.exc_info())
 
+    def critical(self, msg, *args, **kwargs):
+        self.criticals.append(self.format_message(msg, args))
+
     @classmethod
     def format_message(cls, msg, args):
         if len(args) == 1 and isinstance(args[0], dict):
@@ -744,3 +816,4 @@ class FakeLogging(object):
         self.warnings = []
         self.exception_messages = []
         self.exception_infos = []
+        self.criticals = []

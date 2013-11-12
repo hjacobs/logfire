@@ -355,34 +355,45 @@ COLORS = [
 
 class RedisOutputThread(Thread):
 
+    MAX_PING_ATTEMPTS = 20
+    CUMULATIVE_PING_DELAY = 1  # seconds
+
     def __init__(self, aggregator, host, port, namespace):
         Thread.__init__(self, name='RedisOutputThread')
         self.aggregator = aggregator
         self._redis_namespace = namespace
-        import redis
-        self._redis = redis.StrictRedis(host, port, socket_timeout=10)
+        self._redis = self.import_redis().StrictRedis(host, port, socket_timeout=10)
         self._connect()
 
-    def _connect(self):
-        wait = -1
-        while True:
-            wait += 1
-            time.sleep(wait)
-            if wait == 20:
-                return False
+    @staticmethod
+    def import_redis():
+        """Used instead of 'import redis' to facilitate unit testing."""
 
-            if wait > 0:
-                logging.info('Retrying connection, attempt {0}'.format(wait + 1))
+        import redis
+        return redis
+
+    def _connect(self):
+        """
+        Attempts to connect to Redis. Exits the program if no connection can be established after MAX_PING_ATTEMPTS
+        attempts over (MAX_PING_ATTEMPTS * (MAX_PING_ATTEMPTS - 1) * CUMULATIVE_PING_DELAY / 2 seconds.
+        """
+
+        for attempt in range(self.MAX_PING_ATTEMPTS):
+            time.sleep(attempt * self.CUMULATIVE_PING_DELAY)
+
+            if attempt > 0:
+                logging.info('Retrying connection, attempt {0}'.format(attempt))
 
             try:
                 self._redis.ping()
-                break
-            except UserWarning:
-                traceback.print_exc()
             except Exception:
-                traceback.print_exc()
-
-        self._pipeline = self._redis.pipeline(transaction=False)
+                logging.warning('Failed to ping Redis.')
+            else:
+                self._pipeline = self._redis.pipeline(transaction=False)
+                break
+        else:
+            logging.critical('Could not connect to Redis.')
+            sys.exit(1)
 
     def run(self):
         file_names = self.aggregator.file_names
