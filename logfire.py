@@ -43,6 +43,8 @@ LOG_ENTRY_FIELDS = 'timestamp reader_id entry_number flow_id level thread class_
 
 class LogEntry(collections.namedtuple('LogEntry', LOG_ENTRY_FIELDS)):
 
+    __slots__ = ()
+
     def as_logstash(self, logfile_name):
         return {
             '@timestamp': self.timestamp,
