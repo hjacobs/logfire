@@ -41,11 +41,12 @@ LogLevel.FATAL = LogLevel(5, 'FATAL')
 
 class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread clazz method file line message')):
 
-    def as_logstash(self):
+    def as_logstash(self, logfile_name):
         d = self._asdict()
         d['@timestamp'] = self.ts
         d['level'] = str(self.level)
         d['class'] = self.clazz
+        d['logfile'] = logfile_name
         del d['clazz']
         del d['fid']
         del d['i']
@@ -402,8 +403,7 @@ class RedisOutputThread(Thread):
             if chunk_size > 0:
                 pushed_entry_count = 0
                 for entry in self.aggregator.get():
-                    logstash_dict = entry.as_logstash()
-                    logstash_dict['logfile'] = file_name_by_id[entry.fid]
+                    logstash_dict = entry.as_logstash(file_name_by_id[entry.fid])
                     self._pipeline.rpush(self._redis_namespace, json.dumps(logstash_dict))
                     pushed_entry_count += 1
                     if pushed_entry_count > chunk_size:
