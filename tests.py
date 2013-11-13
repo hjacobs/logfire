@@ -74,10 +74,10 @@ class Log4jParserTests(TestCase):
         """Skipped lines are logged."""
 
         list(Log4jParser().read(0, StringIO('NO_DATE\n2000-01-01 00:00:00,000 NO_COLUMNS')))
-        warnings = self.fake_logging.warnings
-        self.assertEqual(len(warnings), 2)
-        self.assertTrue('NO_DATE' in warnings[0])
-        self.assertTrue('NO_COLUMNS' in warnings[1])
+        log = self.fake_logging.log
+        self.assertTrue(log[0].startswith('[WARN]') and 'NO_DATE' in log[0])
+        self.assertTrue(log[1].startswith('[WARN]') and 'NO_COLUMNS' in log[1])
+        self.assertEqual(len(log), 2)
 
     def test_read_log_level_mapping(self):
         """The log level is correctly mapped to LogLevel intances."""
@@ -387,7 +387,7 @@ class LogReaderTests(TestCase):
             reader.logfile = f
             reader._seek_first_unprocessed_position()
             self.assertEqual(f.tell(), 0)
-            self.assertEqual(self.fake_logging.warnings, ['Failed to read the progress file for "log.log".'])
+            self.assertEqual(self.fake_logging.log, ['[WARN] Failed to read the progress file for "log.log".'])
 
     ### tests for _seek_tail() ###
 
@@ -535,7 +535,7 @@ class LogReaderTests(TestCase):
     def test_ensure_file_is_good_file_does_not_exist(self):
         reader = LogReader(0, 'no.such.file', Log4jParser(), FakeReceiver())
         reader._ensure_file_is_good()
-        self.assertEqual(self.fake_logging.infos, ['The file no.such.file has been removed.'])
+        self.assertEqual(self.fake_logging.log, ['[INFO] The file no.such.file has been removed.'])
 
     def test_ensure_file_is_good_file_has_been_rotated(self):
         with open('log.log', 'wb') as f:
@@ -548,7 +548,8 @@ class LogReaderTests(TestCase):
             self.assertNotEqual(reader.logfile, f)
             self.assertFalse(reader.logfile.closed)
             self.assertEqual(reader.logfile.readline(), 'Some file contents!')
-            self.assertEqual(self.fake_logging.infos[0], 'The file log.log has been rotated.')
+            self.assertEqual(self.fake_logging.log, ['[INFO] The file log.log has been rotated.',
+                                                     '[INFO] Closed log.log.', '[INFO] Opened log.log.'])
 
     def test_ensure_file_is_good_file_has_been_truncated(self):
         with open('log.log', 'wb') as f:
@@ -561,7 +562,7 @@ class LogReaderTests(TestCase):
             self.assertFalse(f.closed)
             self.assertEqual(reader.logfile, f)
             self.assertEqual(f.tell(), 0)
-            self.assertEqual(self.fake_logging.infos, ['The file log.log has been truncated.'])
+            self.assertEqual(self.fake_logging.log, ['[INFO] The file log.log has been truncated.'])
 
     def test_ensure_file_is_good_file_is_good(self):
         with open('log.log', 'wb') as f:
@@ -574,7 +575,7 @@ class LogReaderTests(TestCase):
             self.assertFalse(f.closed)
             self.assertEqual(reader.logfile, f)
             self.assertEqual(f.tell(), 10)
-            self.assertEqual(self.fake_logging.infos, [])
+            self.assertEqual(self.fake_logging.log, [])
 
     ### tests for _save_progress() ###
 
@@ -597,7 +598,7 @@ class LogReaderTests(TestCase):
         reader._make_progress_string = lambda: 'log.log 123g456 10 19'
         reader._save_progress()
         self.assertFalse(os.path.exists('progressf16c93d1167446f99a26837c0fdeac6fb73869794'))
-        self.assertEqual(self.fake_logging.exception_messages, ['Failed to save progress for log.log.'])
+        self.assertEqual(self.fake_logging.log[-1], '[ERROR] Failed to save progress for log.log.')
 
     ### tests for _load_progress() ###
 
@@ -629,7 +630,7 @@ class LogReaderTests(TestCase):
         reader.logfile_id = '123g456'
         result = reader._make_progress_string()
         self.assertEqual(result, None)
-        self.assertEqual(self.fake_logging.exception_messages, ['Failed to gather progress information for log.log.'])
+        self.assertEqual(self.fake_logging.log, ['[ERROR] Failed to gather progress information for log.log.'])
 
     ### utility methods ###
 
@@ -703,9 +704,11 @@ class RedisOutputThreadTests(TestCase):
                 self.assertTrue('"@timestamp": "{0}"'.format(count_start + i) in fake_redis.log[block_start + i])
                 self.assertTrue('"logfile": "log.log"' in fake_redis.log[block_start + i])
             self.assertEqual(fake_redis.log[block_start + 23], "execute()")
-        self.assertEqual(self.fake_logging.debugs[0], 'Starting to push entries to Redis.')
-        self.assertTrue(self.fake_logging.debugs[1].startswith('Pushed 23 entries to Redis.'))
-        self.assertEqual(len(self.fake_logging.debugs), 2)
+        
+        log = self.fake_logging.log
+        self.assertEqual(log[0], '[DEBUG] Starting to push entries to Redis.')
+        self.assertTrue(log[1].startswith('[DEBUG] Pushed 23 entries to Redis.'))
+        self.assertEqual(len(log), 2)
 
     def test_run_one_connection_failure(self):
         fake_redis = self.install_fake_redis(execute_exceptions=(redis.exceptions.RedisError, None, ZeroDivisionError))
@@ -722,11 +725,13 @@ class RedisOutputThreadTests(TestCase):
                 self.assertTrue('"@timestamp": "{0}"'.format(count_start + i) in fake_redis.log[block_start + i])
                 self.assertTrue('"logfile": "log.log"' in fake_redis.log[block_start + i])
             self.assertEqual(fake_redis.log[block_start + 23], "execute()") 
-        self.assertEqual(self.fake_logging.debugs[0], 'Starting to push entries to Redis.')
-        self.assertTrue(self.fake_logging.debugs[1].startswith('Pushed 23 entries to Redis.'))
-        self.assertEqual(len(self.fake_logging.debugs), 2)
-        self.assertEqual(self.fake_logging.infos, ['There are 46 pushable entries queued.'])
-        self.assertEqual(self.fake_logging.exception_messages, ['Failed to push entries to Redis. Will retry in 0 seconds.'])
+
+        log = self.fake_logging.log
+        self.assertEqual(log[0], '[DEBUG] Starting to push entries to Redis.')
+        self.assertEqual(log[1], '[ERROR] Failed to push entries to Redis. Will retry in 0 seconds.')
+        self.assertEqual(log[2], '[INFO] There are 46 pushable entries queued.')
+        self.assertTrue(log[3].startswith('[DEBUG] Pushed 23 entries to Redis.'))
+        self.assertEqual(len(log), 4)
 
     def install_fake_redis(self, *args, **kwargs):
         fake_redis = FakeRedis(*args, **kwargs)
@@ -870,45 +875,34 @@ class prepared_reader(object):
         self.log.close()
 
 
-
-
-
-
-
 class FakeLogging(object):
+    """Can be patched in for the logging module. Stores all logging messages in log."""
 
     def __init__(self):
         self.reset()
 
     def debug(self, msg, *args, **kwargs):
-        self.debugs.append(self.format_message(msg, args))
+        self.add('DEBUG', msg, *args)
 
     def info(self, msg, *args, **kwargs):
-        self.infos.append(self.format_message(msg, args))
+        self.add('INFO', msg, *args)
 
     def warn(self, msg, *args, **kwargs):
-        self.warnings.append(self.format_message(msg, args))
+        self.add('WARN', msg, *args)
 
     def warning(self, msg, *args, **kwargs):
-        self.warnings.append(self.format_message(msg, args))
+        self.add('WARN', msg, *args)
 
     def exception(self, msg, *args, **kwargs):
-        self.exception_messages.append(self.format_message(msg, args))
-        self.exception_infos.append(sys.exc_info())
+        self.add('ERROR', msg, *args)
 
     def critical(self, msg, *args, **kwargs):
-        self.criticals.append(self.format_message(msg, args))
+        self.add('CRITICAL', msg, *args)
 
-    @classmethod
-    def format_message(cls, msg, args):
+    def add(self, level, message, *args):
         if len(args) == 1 and isinstance(args[0], dict):
             args = args[0]
-        return msg % args
+        self.log.append('[%s] %s' % (level, message % args))        
 
     def reset(self):
-        self.debugs = []
-        self.infos = []
-        self.warnings = []
-        self.exception_messages = []
-        self.exception_infos = []
-        self.criticals = []
+        self.log = []
