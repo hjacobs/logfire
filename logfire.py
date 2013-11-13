@@ -27,9 +27,6 @@ class LogLevel(object):
         self.name = name
         LogLevel.FROM_FIRST_LETTER[name[0]] = self
 
-    def __str__(self):
-        return self.name
-
     def __repr__(self):
         return self.name
 
