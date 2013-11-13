@@ -308,11 +308,11 @@ class LogFilter(object):
     def matches(self, entry):
         ok = not self.levels or entry.level in self.levels
         if ok and self.grep:
-            ok = self.grep in entry.message or self.grep in entry.clazz
+            ok = self.grep in entry.message or self.grep in entry.class_
         if ok and self.time_from:
-            ok = entry.ts >= self.time_from
+            ok = entry.timestamp >= self.time_from
         if ok and self.time_to:
-            ok = entry.ts < self.time_to
+            ok = entry.timestamp < self.time_to
 
         return ok
 

@@ -187,9 +187,9 @@ class Log4jParserTests(TestCase):
 
         entries = list(Log4jParser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].clazz, 'C')
+        self.assertEqual(entries[0].class_, 'C')
         self.assertEqual(entries[0].method, 'm')
-        self.assertEqual(entries[0].file, 'C.java')
+        self.assertEqual(entries[0].source_file, 'C.java')
         self.assertEqual(entries[0].line, 23)
 
     def test_read_message_reads_single_line_entries(self):
@@ -249,7 +249,7 @@ class LogReaderTests(TestCase):
             reader._maybe_do_housekeeping = lambda current_timestamp: housekeeping_timestamps.append(current_timestamp)
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 61)
-            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
             self.assertEqual(reader.receiver.entries[60], 'EOF 0')
             self.assertEqual(len(housekeeping_timestamps), 0)
 
@@ -259,7 +259,7 @@ class LogReaderTests(TestCase):
             reader._maybe_do_housekeeping = lambda current_timestamp: housekeeping_timestamps.append(current_timestamp)
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 3001)
-            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
             self.assertEqual(reader.receiver.entries[3000], 'EOF 0')
             self.assertEqual(len(housekeeping_timestamps), 2)
 
@@ -279,15 +279,15 @@ class LogReaderTests(TestCase):
             reader._maybe_do_housekeeping = lambda current_timestamp: 1/0
             self.assertRaises(ZeroDivisionError, reader.run)
             self.assertEqual(len(reader.receiver.entries), 60)
-            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
-            self.assertEqual(reader.receiver.entries[59].ts, '2000-01-01 00:00:59,000')
+            self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[59].timestamp, '2000-01-01 00:00:59,000')
 
     def test_run_seek_tail(self):
         with prepared_reader(seconds=range(60)) as reader:
             reader.tail_length = 30
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 31)
-            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
+            self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:30,000')
             self.assertEqual(reader.receiver.entries[30], 'EOF 0')        
 
     def test_run_seek_tail_none(self):
@@ -295,7 +295,7 @@ class LogReaderTests(TestCase):
             reader.tail_length = None
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 61)
-            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:00,000')
+            self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
             self.assertEqual(reader.receiver.entries[60], 'EOF 0')        
 
     def test_run_seek_tail_zero(self):
@@ -311,7 +311,7 @@ class LogReaderTests(TestCase):
             reader.progress_file_path = 'progressf16c93d1167446f99a26837c0fdeac6fb73869794'
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 31)
-            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
+            self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:30,000')
             self.assertEqual(reader.receiver.entries[30], 'EOF 0')
 
     def test_run_seek_time(self):
@@ -319,7 +319,7 @@ class LogReaderTests(TestCase):
             reader.entry_filter.time_from = '2000-01-01 00:00:30,000'
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 31)
-            self.assertEqual(reader.receiver.entries[0].ts, '2000-01-01 00:00:30,000')
+            self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:30,000')
             self.assertEqual(reader.receiver.entries[30], 'EOF 0')
 
     ### tests for _open_file() ###
@@ -752,8 +752,7 @@ class MiscellaneousTests(TestCase):
         expected = {'@timestamp': '2000-01-01 00:00:00,000', 'flowid': 'FlowID', 'level': 'WARN', 'thread': 'Thread',
                     'class': 'ThingDoer', 'method': 'doThing', 'file': 'ThingDoer.java', 'line': 2,
                     'message': 'Problem!', 'logfile': 'log.log'}
-        self.assertEqual(dict(entry.as_logstash('log.log')), expected)
-
+        self.assertEqual(entry.as_logstash('log.log'), expected)
 
 
 class FakeReceiver(object):

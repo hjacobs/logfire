@@ -39,19 +39,23 @@ LogLevel.ERROR = LogLevel(4, 'ERROR')
 LogLevel.FATAL = LogLevel(5, 'FATAL')
 
 
-class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread clazz method file line message')):
+LOG_ENTRY_FIELDS = 'timestamp reader_id entry_number flow_id level thread class_ method source_file line message'
+
+class LogEntry(collections.namedtuple('LogEntry', LOG_ENTRY_FIELDS)):
 
     def as_logstash(self, logfile_name):
-        d = self._asdict()
-        d['@timestamp'] = self.ts
-        d['level'] = str(self.level)
-        d['class'] = self.clazz
-        d['logfile'] = logfile_name
-        del d['clazz']
-        del d['fid']
-        del d['i']
-        del d['ts']
-        return d
+        return {
+            '@timestamp': self.timestamp,
+            'flowid': self.flow_id,
+            'level': str(self.level),
+            'thread': self.thread,
+            'class': self.class_,
+            'method': self.method,
+            'file': self.source_file,
+            'line': self.line,
+            'message': self.message,
+            'logfile': logfile_name
+        }
 
 
 class Log4jParser(object):
@@ -121,7 +125,7 @@ class Log4jParser(object):
         # There cannot be more than five columns (not counting the date column).
         return
 
-    def read(self, fid, logfile):
+    def read(self, reader_id, logfile):
         """read log4j formatted log file"""
 
         assert 'b' in getattr(logfile, 'mode', 'rb'), 'The file has not been opened in binary mode.'
@@ -134,14 +138,14 @@ class Log4jParser(object):
         location_column_index = self.location_column_index
         message_column_index = self.message_column_index
 
-        i = 0
+        entry_number = 0
         while True:
             line = logfile.readline()
             if not line:
                 break
             try:
-                ts = line[:23]
-                if not ts.startswith('20'):
+                timestamp = line[:23]
+                if not timestamp.startswith('20'):
                     logging.warn('Skipped a line because it does not appear to start with a date: "%s".', line)
                     continue
                 columns = line[24:].split(delimiter, maxsplit)
@@ -151,26 +155,26 @@ class Log4jParser(object):
                 level = self._read_log_level(columns, level_column_index)
                 flow_id = self._read_flow_id(columns, flow_id_column_index)
                 thread = self._read_thread(columns, thread_column_index)
-                class_, method, file_, line_number = self._read_code_position(columns, location_column_index)
+                class_, method, source_file, line_number = self._read_code_position(columns, location_column_index)
                 message = self._read_message(columns, message_column_index, logfile)
             except Exception:  #pragma: nocover
                 # This shouldn't actually be possible.
-                logging.exception('Failed to parse line "%s" of %s', line, fid)
+                logging.exception('Failed to parse line "%s" of %s', line, reader_id)
             else:
                 yield LogEntry(
-                    fid=fid,
-                    ts=ts,
-                    i=i,
-                    flowid=flow_id,
+                    reader_id=reader_id,
+                    timestamp=timestamp,
+                    entry_number=entry_number,
+                    flow_id=flow_id,
                     level=level,
                     thread=thread,
-                    clazz=class_,
+                    class_=class_,
                     method=method,
-                    file=file_,
+                    source_file=source_file,
                     line=line_number,
                     message=message,
                 )
-            i += 1
+            entry_number += 1
 
     def get_time_string(self, line):
         if self.is_continuation_line(line):
@@ -197,14 +201,14 @@ class Log4jParser(object):
         return self._split_code_position(columns[index])
 
     def _is_valid_code_position(self, string):
-        class_, method, file_, line_number = self._split_code_position(string)
-        return bool(class_ and method and file_ and line_number != -1)
+        class_, method, source_file, line_number = self._split_code_position(string)
+        return bool(class_ and method and source_file and line_number != -1)
 
     def _split_code_position(self, string):
         class_and_method, _, file_and_line_number = string.rstrip(':)').rpartition('(')
         class_, _, method = class_and_method.rpartition('.')
-        file_, _, line_number = file_and_line_number.partition(':')
-        return class_, method, file_, try_parsing_int(line_number, default=-1)
+        source_file, _, line_number = file_and_line_number.partition(':')
+        return class_, method, source_file, try_parsing_int(line_number, default=-1)
 
     def _read_message(self, columns, index, logfile):
         lines = [columns[index]]
@@ -403,7 +407,7 @@ class RedisOutputThread(Thread):
             if chunk_size > 0:
                 pushed_entry_count = 0
                 for entry in self.aggregator.get():
-                    logstash_dict = entry.as_logstash(file_name_by_id[entry.fid])
+                    logstash_dict = entry.as_logstash(file_name_by_id[entry.reader_id])
                     self._pipeline.rpush(self._redis_namespace, json.dumps(logstash_dict))
                     pushed_entry_count += 1
                     if pushed_entry_count > chunk_size:
@@ -433,10 +437,10 @@ class OutputThread(Thread):
         trunc = self.truncate
         file_names = self.aggregator.file_names
         for entry in self.aggregator.get():
-            fd.write(file_names[entry.fid] + ' ')
+            fd.write(file_names[entry.reader_id] + ' ')
             fd.write('\033[97m')
             # do not print year:
-            fd.write(entry.ts[5:] + ' ')
+            fd.write(entry.timestamp[5:] + ' ')
             if entry.level == LogLevel.FATAL:
                 fd.write('\033[95m')
             elif entry.level == LogLevel.ERROR:
@@ -454,16 +458,16 @@ class OutputThread(Thread):
                 msg = msg.replace('\n', '\\n')
             if trunc and len(msg) > trunc:
                 msg = msg[:trunc].rsplit(' ', 1)[0] + '...'
-            if entry.flowid:
-                fd.write(COLORS[hash(entry.flowid) % 7])
-                fd.write(' ' + entry.flowid[:2] + '-' + entry.flowid[-2:])
+            if entry.flow_id:
+                fd.write(COLORS[hash(entry.flow_id) % 7])
+                fd.write(' ' + entry.flow_id[:2] + '-' + entry.flow_id[-2:])
                 fd.write('\033[0m')
             else:
                 fd.write('   -  ')
             fd.write(' ' + (entry.thread or '-'))
-            fd.write(' ' + entry.clazz)
+            fd.write(' ' + entry.class_)
             fd.write('.' + entry.method)
-            fd.write(' ' + entry.file)
+            fd.write(' ' + entry.source_file)
             fd.write(':' + str(entry.line))
             if entry.level == LogLevel.FATAL:
                 fd.write('\033[95m')
