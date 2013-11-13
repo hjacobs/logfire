@@ -678,13 +678,11 @@ class RedisOutputThreadTests(TestCase):
     def setUp(self):
         logfire.logging = self.fake_logging
         self.old_import_redis = RedisOutputThread.import_redis
-        self.old_cumulative_ping_delay = RedisOutputThread.CUMULATIVE_PING_DELAY
 
     def tearDown(self):
         logfire.logging = logging
         self.fake_logging.reset()
         RedisOutputThread.import_redis = staticmethod(self.old_import_redis)
-        RedisOutputThread.CUMULATIVE_PING_DELAY = self.old_cumulative_ping_delay
 
     def test_init_and_connect(self):
         fake_redis = FakeRedis()
@@ -694,21 +692,7 @@ class RedisOutputThreadTests(TestCase):
         self.assertEqual(rot._redis_namespace, 'NAMESPACE')
         self.assertTrue(rot._redis)
         self.assertTrue(rot._pipeline)
-        self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "ping()", "pipeline(transaction=False)"])
-
-    def test_init_and_connect_with_ping_exception(self):
-        fake_redis = FakeRedis(ping_fail_count=1, ping_fail_exception=Exception)
-        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
-        RedisOutputThread.CUMULATIVE_PING_DELAY = 0.001
-        RedisOutputThread('DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
-        self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "ping()", "ping()", "pipeline(transaction=False)"])
-
-    def test_init_and_connect_with_ping_failure(self):
-        fake_redis = FakeRedis(ping_fail_count=23, ping_fail_exception=Exception)
-        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
-        RedisOutputThread.CUMULATIVE_PING_DELAY = 0
-        self.assertRaises(SystemExit, RedisOutputThread, 'DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
-        self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)"] + ["ping()"] * 20)
+        self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "pipeline(transaction=False)"])
 
     def test_import_redis(self):
         import redis
@@ -721,11 +705,10 @@ class RedisOutputThreadTests(TestCase):
         rot.WRITE_INTERVAL = 0
         self.assertRaises(SystemExit, rot.run)
         commands = fake_redis.log
-        self.assertEqual(len(commands), 53)
+        self.assertEqual(len(commands), 52)
         self.assertEqual(commands[0], "StrictRedis('host01', 1234, socket_timeout=10)")
-        self.assertEqual(commands[1], "ping()")
-        self.assertEqual(commands[2], "pipeline(transaction=False)")
-        for block_start in (3, 28):
+        self.assertEqual(commands[1], "pipeline(transaction=False)")
+        for block_start in (2, 27):
             for i in range(block_start, block_start + 24):
                 self.assertTrue(commands[i].startswith("rpush('NAMESPACE', '{"))
                 self.assertTrue('"logfile": "log.log"' in commands[i])
@@ -781,21 +764,13 @@ class FakeLogAggregator(object):
 
 class FakeRedis(object):
 
-    def __init__(self, execute_success_count=0, ping_fail_count=0, ping_fail_exception=Exception):
+    def __init__(self, execute_success_count=0):
         self.log = []
-        self.remaining_ping_fail_count = ping_fail_count
         self.remaining_execute_success_count = execute_success_count
-        self.ping_fail_exception = ping_fail_exception
 
     def StrictRedis(self, host, port, socket_timeout=None):
         self.log.append('StrictRedis({0!r}, {1!r}, socket_timeout={2!r})'.format(host, port, socket_timeout))
         return self
-
-    def ping(self):
-        self.log.append('ping()')
-        if self.remaining_ping_fail_count:
-            self.remaining_ping_fail_count -= 1
-            raise self.ping_fail_exception()
 
     def pipeline(self, transaction=None):
         self.log.append('pipeline(transaction={0!r})'.format(transaction))
