@@ -4,6 +4,7 @@ from unittest import TestCase
 import gzip
 import logging
 import os
+import redis
 import sys
 
 import logfire
@@ -671,22 +672,16 @@ class LogFilterTests(TestCase):
 
 class RedisOutputThreadTests(TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.fake_logging = FakeLogging()
-
     def setUp(self):
+        self.fake_logging = FakeLogging()
         logfire.logging = self.fake_logging
-        self.old_import_redis = RedisOutputThread.import_redis
 
     def tearDown(self):
         logfire.logging = logging
-        self.fake_logging.reset()
-        RedisOutputThread.import_redis = staticmethod(self.old_import_redis)
+        logfire.redis = redis
 
-    def test_init_and_connect(self):
-        fake_redis = FakeRedis()
-        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
+    def test_initialization(self):
+        fake_redis = self.install_fake_redis()
         rot = RedisOutputThread('DUMMY AGGREGATOR', 'host01', 1234, 'NAMESPACE')
         self.assertEqual(rot.aggregator, 'DUMMY AGGREGATOR')
         self.assertEqual(rot._redis_namespace, 'NAMESPACE')
@@ -694,26 +689,24 @@ class RedisOutputThreadTests(TestCase):
         self.assertTrue(rot._pipeline)
         self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "pipeline(transaction=False)"])
 
-    def test_import_redis(self):
-        import redis
-        self.assertEqual(RedisOutputThread.import_redis(), redis)
-
     def test_run(self):
-        fake_redis = FakeRedis(execute_success_count=1)
-        RedisOutputThread.import_redis = staticmethod(lambda: fake_redis)
+        fake_redis = self.install_fake_redis(execute_success_count=1)
         rot = RedisOutputThread(FakeLogAggregator(), 'host01', 1234, 'NAMESPACE')
         rot.WRITE_INTERVAL = 0
         self.assertRaises(SystemExit, rot.run)
-        commands = fake_redis.log
-        self.assertEqual(len(commands), 52)
-        self.assertEqual(commands[0], "StrictRedis('host01', 1234, socket_timeout=10)")
-        self.assertEqual(commands[1], "pipeline(transaction=False)")
+        self.assertEqual(len(fake_redis.log), 52)
+        self.assertEqual(fake_redis.log[0], "StrictRedis('host01', 1234, socket_timeout=10)")
+        self.assertEqual(fake_redis.log[1], "pipeline(transaction=False)")
         for block_start in (2, 27):
             for i in range(block_start, block_start + 24):
-                self.assertTrue(commands[i].startswith("rpush('NAMESPACE', '{"))
-                self.assertTrue('"logfile": "log.log"' in commands[i])
-            self.assertEqual(commands[block_start + 24], "execute()")
+                self.assertTrue(fake_redis.log[i].startswith("rpush('NAMESPACE', '{"))
+                self.assertTrue('"logfile": "log.log"' in fake_redis.log[i])
+            self.assertEqual(fake_redis.log[block_start + 24], "execute()")
 
+    def install_fake_redis(self, *args, **kwargs):
+        fake_redis = FakeRedis(*args, **kwargs)
+        logfire.redis = fake_redis
+        return fake_redis
 
 class MiscellaneousTests(TestCase):
 

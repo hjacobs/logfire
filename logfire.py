@@ -15,6 +15,11 @@ from argparse import ArgumentParser
 
 from logreader import LogReader, LogFilter
 
+try:
+    import redis
+except ImportError:
+    pass  # The module might not actually be required.
+
 LOG_FORMAT = '%(asctime)s %(levelname)s: %(message)s'
 
 
@@ -365,15 +370,8 @@ class RedisOutputThread(Thread):
         Thread.__init__(self, name='RedisOutputThread')
         self.aggregator = aggregator
         self._redis_namespace = namespace
-        self._redis = self.import_redis().StrictRedis(host, port, socket_timeout=10)
+        self._redis = redis.StrictRedis(host, port, socket_timeout=10)
         self._pipeline = self._redis.pipeline(transaction=False)
-
-    @staticmethod
-    def import_redis():
-        """Used instead of 'import redis' to facilitate unit testing."""
-
-        import redis
-        return redis
 
     def run(self):
         file_name_by_id = self.aggregator.file_names
