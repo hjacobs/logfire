@@ -18,7 +18,7 @@ from logreader import LogReader, LogFilter
 
 try:
     import redis
-except ImportError:
+except ImportError:  #pragma: nocover
     pass  # The module might not actually be required.
 
 LOG_FORMAT = '%(asctime)s %(levelname)s: %(message)s'
@@ -239,15 +239,6 @@ def try_parsing_int(string, default=None):
         return default
 
 
-def parse_timestamp(ts):
-    """takes a timestamp such as 2011-09-18 16:00:01,123"""
-
-    if len(ts) < 19:
-        ts += ':00'
-    struct = time.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
-    return time.mktime(struct)
-
-
 class Watcher:
 
     """this class solves two problems with multithreaded
@@ -294,45 +285,34 @@ class Watcher:
             pass
 
 
-class LogAggregator(object):
+class OrderedLogAggregator(object):
 
-    def __init__(self, file_names, sleep=0.5):
-        self.file_names = file_names
-        n = len(file_names)
+    def __init__(self, file_names):
         self.entries = []
-        self.open_files = set(range(n))
-        self._sleep = sleep
+        self.open_files = set(range(len(file_names)))
 
     def add(self, entry):
         heapq.heappush(self.entries, entry)
 
-        # if
-        # print self.entries[-10:]
-        # print entry.fid, entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
-
     def eof(self, fid):
         self.open_files.remove(fid)
+
+    def __len__(self):
+        return len(self.entries)
 
     def get(self):
         while self.open_files or self.entries:
             try:
-                entry = heapq.heappop(self.entries)
-                yield entry
+                yield heapq.heappop(self.entries)
             except IndexError:
-                if self._sleep:
-                    logging.debug('Sleeping %ss..', self._sleep)
-                    time.sleep(self._sleep)
                 pass
 
 
 class NonOrderedLogAggregator(object):
 
-    def __init__(self, file_names, sleep=0.5):
-        self.file_names = file_names
-        n = len(file_names)
+    def __init__(self, file_names):
         self.entries = collections.deque()
-        self.open_files = set(range(n))
-        self._sleep = sleep
+        self.open_files = set(range(len(file_names)))
 
     def add(self, entry):
         self.entries.append(entry)
@@ -346,8 +326,7 @@ class NonOrderedLogAggregator(object):
     def get(self):
         while True:
             try:
-                entry = self.entries.popleft()
-                yield entry
+                yield self.entries.popleft()
             except IndexError:
                 return
 
@@ -547,7 +526,7 @@ def main():
     if args.redis_host:
         aggregator = NonOrderedLogAggregator(file_names)
     else:
-        aggregator = LogAggregator(file_names)
+        aggregator = OrderedLogAggregator(file_names)
     readers = []
     fid = 0
     for fname_with_name in file_names:
@@ -585,6 +564,6 @@ def main():
     out.start()
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  #pragma: nocover
     main()
 

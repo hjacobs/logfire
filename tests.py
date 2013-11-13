@@ -9,7 +9,7 @@ import sys
 
 import logfire
 import logreader
-from logfire import Log4jParser, LogLevel, LogEntry, RedisOutputThread, NonOrderedLogAggregator
+from logfire import Log4jParser, LogLevel, LogEntry, RedisOutputThread, NonOrderedLogAggregator, OrderedLogAggregator
 from logreader import LogReader, LogFilter, get_device_and_inode_string
 
 
@@ -732,6 +732,41 @@ class RedisOutputThreadTests(TestCase):
         fake_redis = FakeRedis(*args, **kwargs)
         logfire.redis = fake_redis
         return fake_redis
+
+
+class LogAggregatorTests(TestCase):
+
+    def test_non_ordered_log_aggregator(self):
+        aggregator = NonOrderedLogAggregator([])
+        aggregator.add(2)
+        aggregator.add(1)
+        aggregator.add(3)
+        self.assertEqual(len(aggregator), 3)
+        self.assertEqual(list(aggregator.get()), [2, 1, 3])
+        self.assertEqual(len(aggregator), 0)
+
+    def test_ordered_log_aggregator(self):
+        aggregator = OrderedLogAggregator([])
+        aggregator.add(2)
+        aggregator.add(1)
+        aggregator.add(3)
+        self.assertEqual(len(aggregator), 3)
+        self.assertEqual(list(aggregator.get()), [1, 2, 3])
+        self.assertEqual(len(aggregator), 0)
+
+    def test_non_ordered_log_aggregator_eof(self):
+        aggregator = NonOrderedLogAggregator(['log.log', 'another.log'])
+        self.assertEqual(aggregator.open_files, set([0, 1]))
+        aggregator.eof(0)
+        self.assertEqual(aggregator.open_files, set([1]))
+
+    def test_ordered_log_aggregator_eof(self):
+        aggregator = OrderedLogAggregator(['log.log', 'another.log'])
+        self.assertEqual(aggregator.open_files, set([0, 1]))
+        aggregator.eof(0)
+        self.assertEqual(aggregator.open_files, set([1]))
+
+
 
 class MiscellaneousTests(TestCase):
 
