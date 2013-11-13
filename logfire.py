@@ -3,6 +3,7 @@
 
 import collections
 import heapq
+import itertools
 import json
 import logging
 import os
@@ -364,7 +365,9 @@ COLORS = [
 
 class RedisOutputThread(Thread):
 
-    WRITE_INTERVAL = 1  # seconds
+    REDIS_PUSH_INTERVAL = 1  # seconds
+    REDIS_ERROR_RETRY_DELAY = 5  # seconds
+    MAX_CHUNK_SIZE = 1000  # entries
 
     def __init__(self, aggregator, host, port, namespace):
         Thread.__init__(self, name='RedisOutputThread')
@@ -374,27 +377,42 @@ class RedisOutputThread(Thread):
         self._pipeline = self._redis.pipeline(transaction=False)
 
     def run(self):
+        # Performance!
+        namespace = self._redis_namespace
+        pipeline = self._pipeline
         file_name_by_id = self.aggregator.file_names
-        chunk_start_timestamp = time.time()
+
+        logging.debug('Starting to push entries to Redis.')
+        last_report_timestamp = time.time()
+        time.sleep(self.REDIS_PUSH_INTERVAL)
+
         while True:
-            time.sleep(self.WRITE_INTERVAL)
-            chunk_size = len(self.aggregator)
-            if chunk_size > 0:
-                pushed_entry_count = 0
-                for entry in self.aggregator.get():
-                    logstash_dict = entry.as_logstash(file_name_by_id[entry.reader_id])
-                    self._pipeline.rpush(self._redis_namespace, json.dumps(logstash_dict))
-                    pushed_entry_count += 1
-                    if pushed_entry_count > chunk_size:
+            poppable_entry_count = min(self.MAX_CHUNK_SIZE, len(self.aggregator))
+
+            if poppable_entry_count > 0:
+                log_entries = itertools.islice(self.aggregator.get(), poppable_entry_count)
+                json_strings = [json.dumps(e.as_logstash(file_name_by_id[e.reader_id])) for e in log_entries]
+
+                while True:
+                    for j in json_strings:
+                        pipeline.rpush(namespace, j)
+                    try:
+                        pipeline.execute()
+                    except redis.exceptions.RedisError:
+                        message = 'Failed to push entries to Redis. Will retry in %d seconds.'
+                        logging.exception(message, self.REDIS_ERROR_RETRY_DELAY)
+                        logging.info('There are %s pushable entries queued.', len(json_strings) + len(self.aggregator))
+                        time.sleep(self.REDIS_ERROR_RETRY_DELAY)
+                    else:
                         break
-                try:
-                    self._pipeline.execute()
-                except Exception:
-                    logging.exception('Redis connection failure')
+
+            if poppable_entry_count < self.MAX_CHUNK_SIZE:
                 now = time.time()
-                logging.debug('Pushed %s entries (%.1f/s), queue length %s', pushed_entry_count, pushed_entry_count /
-                              (now - chunk_start_timestamp), len(self.aggregator))
-                chunk_start_timestamp = now
+                message = 'Pushed %d entries to Redis. (%.1f entries/s; queue length %d)'
+                entries_per_second = len(json_strings) / (now - last_report_timestamp)
+                logging.debug(message, len(json_strings), entries_per_second, len(self.aggregator))
+                last_report_timestamp = now
+                time.sleep(self.REDIS_PUSH_INTERVAL)
 
 
 class OutputThread(Thread):

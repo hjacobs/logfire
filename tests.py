@@ -689,19 +689,44 @@ class RedisOutputThreadTests(TestCase):
         self.assertTrue(rot._pipeline)
         self.assertEqual(fake_redis.log, ["StrictRedis('host01', 1234, socket_timeout=10)", "pipeline(transaction=False)"])
 
-    def test_run(self):
-        fake_redis = self.install_fake_redis(execute_success_count=1)
+    def test_run_no_failures(self):
+        fake_redis = self.install_fake_redis(execute_exceptions=(None, ZeroDivisionError))
         rot = RedisOutputThread(FakeLogAggregator(), 'host01', 1234, 'NAMESPACE')
-        rot.WRITE_INTERVAL = 0
-        self.assertRaises(SystemExit, rot.run)
-        self.assertEqual(len(fake_redis.log), 52)
+        rot.REDIS_PUSH_INTERVAL = 0
+        self.assertRaises(ZeroDivisionError, rot.run)
+        self.assertEqual(len(fake_redis.log), 50)
         self.assertEqual(fake_redis.log[0], "StrictRedis('host01', 1234, socket_timeout=10)")
         self.assertEqual(fake_redis.log[1], "pipeline(transaction=False)")
-        for block_start in (2, 27):
-            for i in range(block_start, block_start + 24):
-                self.assertTrue(fake_redis.log[i].startswith("rpush('NAMESPACE', '{"))
-                self.assertTrue('"logfile": "log.log"' in fake_redis.log[i])
-            self.assertEqual(fake_redis.log[block_start + 24], "execute()")
+        for block_start, count_start in ((2, 0), (26, 23)):
+            for i in range(23):
+                self.assertTrue(fake_redis.log[block_start + i].startswith("rpush('NAMESPACE', '{"))
+                self.assertTrue('"@timestamp": "{0}"'.format(count_start + i) in fake_redis.log[block_start + i])
+                self.assertTrue('"logfile": "log.log"' in fake_redis.log[block_start + i])
+            self.assertEqual(fake_redis.log[block_start + 23], "execute()")
+        self.assertEqual(self.fake_logging.debugs[0], 'Starting to push entries to Redis.')
+        self.assertTrue(self.fake_logging.debugs[1].startswith('Pushed 23 entries to Redis.'))
+        self.assertEqual(len(self.fake_logging.debugs), 2)
+
+    def test_run_one_connection_failure(self):
+        fake_redis = self.install_fake_redis(execute_exceptions=(redis.exceptions.RedisError, None, ZeroDivisionError))
+        rot = RedisOutputThread(FakeLogAggregator(), 'host01', 1234, 'NAMESPACE')
+        rot.REDIS_PUSH_INTERVAL = 0
+        rot.REDIS_ERROR_RETRY_DELAY = 0
+        self.assertRaises(ZeroDivisionError, rot.run)
+        self.assertEqual(len(fake_redis.log), 74)
+        self.assertEqual(fake_redis.log[0], "StrictRedis('host01', 1234, socket_timeout=10)")
+        self.assertEqual(fake_redis.log[1], "pipeline(transaction=False)")
+        for block_start, count_start in ((2, 0), (26, 0), (50, 23)):
+            for i in range(23):
+                self.assertTrue(fake_redis.log[block_start + i].startswith("rpush('NAMESPACE', '{"))
+                self.assertTrue('"@timestamp": "{0}"'.format(count_start + i) in fake_redis.log[block_start + i])
+                self.assertTrue('"logfile": "log.log"' in fake_redis.log[block_start + i])
+            self.assertEqual(fake_redis.log[block_start + 23], "execute()") 
+        self.assertEqual(self.fake_logging.debugs[0], 'Starting to push entries to Redis.')
+        self.assertTrue(self.fake_logging.debugs[1].startswith('Pushed 23 entries to Redis.'))
+        self.assertEqual(len(self.fake_logging.debugs), 2)
+        self.assertEqual(self.fake_logging.infos, ['There are 46 pushable entries queued.'])
+        self.assertEqual(self.fake_logging.exception_messages, ['Failed to push entries to Redis. Will retry in 0 seconds.'])
 
     def install_fake_redis(self, *args, **kwargs):
         fake_redis = FakeRedis(*args, **kwargs)
@@ -745,21 +770,26 @@ class FakeReceiver(object):
 
 class FakeLogAggregator(object):
 
-    file_names = {'123g456': 'log.log'}
+    def __init__(self):
+        self.file_names = {'123g456': 'log.log'}
+        self.entry_count = -1
 
     def __len__(self):
         return 23
 
     def get(self):
         while True:
-            yield LogEntry(0, '123g456', 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            self.entry_count += 1
+            yield LogEntry(str(self.entry_count), '123g456', 0, 0, 0, 0, 0, 0, 0, 0, 0)
 
 
 class FakeRedis(object):
 
-    def __init__(self, execute_success_count=0):
+    exceptions = redis.exceptions
+
+    def __init__(self, execute_exceptions=(ZeroDivisionError,)):
         self.log = []
-        self.remaining_execute_success_count = execute_success_count
+        self.execute_exceptions = list(execute_exceptions)
 
     def StrictRedis(self, host, port, socket_timeout=None):
         self.log.append('StrictRedis({0!r}, {1!r}, socket_timeout={2!r})'.format(host, port, socket_timeout))
@@ -774,9 +804,10 @@ class FakeRedis(object):
 
     def execute(self):
         self.log.append('execute()')
-        if not self.remaining_execute_success_count:
-            raise SystemExit(0)
-        self.remaining_execute_success_count -= 1
+        exception = self.execute_exceptions[0]
+        self.execute_exceptions = self.execute_exceptions[1:]
+        if exception:
+            raise exception()
 
 
 class prepared_reader(object):
