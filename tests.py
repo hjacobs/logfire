@@ -748,9 +748,9 @@ class MiscellaneousTests(TestCase):
 
     def test_log_entry_as_logstash(self):
         entry = LogEntry('2000-01-01 00:00:00,000', 0, 1000, 'FlowID', LogLevel.WARN, 'Thread', 'ThingDoer', 'doThing',
-                         'log.log', 2, 'Problem!')
+                         'ThingDoer.java', 2, 'Problem!')
         expected = {'@timestamp': '2000-01-01 00:00:00,000', 'flowid': 'FlowID', 'level': 'WARN', 'thread': 'Thread',
-                    'class': 'ThingDoer', 'method': 'doThing', 'file': 'log.log', 'line': 2, 'message': 'Problem!' }
+                    'class': 'ThingDoer', 'method': 'doThing', 'file': 'ThingDoer.java', 'line': 2, 'message': 'Problem!' }
         self.assertEqual(dict(entry.as_logstash()), expected)
 
 
