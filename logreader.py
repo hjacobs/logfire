@@ -105,6 +105,7 @@ class LogReader(threading.Thread):
         if self.logfile:
             self.logfile.close()
             self.logfile = None
+            self.logfile_id = None
             logging.info('Closed %s.' % self.logfile_name)
 
     ### SEEKING ###
