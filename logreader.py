@@ -61,6 +61,8 @@ class LogReader(threading.Thread):
         receiver = self.receiver
         entry_filter = self.entry_filter
 
+        self._maybe_do_housekeeping(time.time())
+
         while True:
             entry_count = 0
             for entry in self.parser.read(reader_id, logfile):

@@ -252,7 +252,7 @@ class LogReaderTests(TestCase):
             self.assertEqual(len(reader.receiver.entries), 61)
             self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
             self.assertEqual(reader.receiver.entries[60], 'EOF 0')
-            self.assertEqual(len(housekeeping_timestamps), 0)
+            self.assertEqual(len(housekeeping_timestamps), 1)
 
     def test_run_lots_of_entries(self):
         housekeeping_timestamps = []
@@ -262,7 +262,7 @@ class LogReaderTests(TestCase):
             self.assertEqual(len(reader.receiver.entries), 3001)
             self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
             self.assertEqual(reader.receiver.entries[3000], 'EOF 0')
-            self.assertEqual(len(housekeeping_timestamps), 2)
+            self.assertEqual(len(housekeeping_timestamps), 3)
 
     def test_run_no_entries_follow(self):
         with prepared_reader(seconds=range(0)) as reader:
@@ -277,7 +277,7 @@ class LogReaderTests(TestCase):
         with prepared_reader(seconds=range(60)) as reader:
             reader.follow = True
             reader.NO_ENTRIES_SLEEP_INTERVAL = 0
-            reader._maybe_do_housekeeping = lambda current_timestamp: 1/0
+            reader._maybe_do_housekeeping = lambda current_timestamp: 1 / (1 - bool(reader.receiver.entries))
             self.assertRaises(ZeroDivisionError, reader.run)
             self.assertEqual(len(reader.receiver.entries), 60)
             self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
@@ -307,8 +307,8 @@ class LogReaderTests(TestCase):
             self.assertEqual(reader.receiver.entries[0], 'EOF 0')   
 
     def test_run_seek_first_unprocessed_position(self):
-        self.write_progress_file('log.log 123g456 2250 2250')
         with prepared_reader(seconds=range(60)) as reader:
+            self.write_progress_file('log.log {0} 2250 2250'.format(get_device_and_inode_string(os.stat('log.log'))))
             reader.progress_file_path = 'progressf16c93d1167446f99a26837c0fdeac6fb73869794'
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 31)
