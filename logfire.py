@@ -3,6 +3,7 @@
 
 import collections
 import heapq
+import itertools
 import json
 import logging
 import os
@@ -14,6 +15,11 @@ from threading import Thread
 from argparse import ArgumentParser
 
 from logreader import LogReader, LogFilter
+
+try:
+    import redis
+except ImportError:  #pragma: nocover
+    pass  # The module might not actually be required.
 
 LOG_FORMAT = '%(asctime)s %(levelname)s: %(message)s'
 
@@ -27,9 +33,6 @@ class LogLevel(object):
         self.name = name
         LogLevel.FROM_FIRST_LETTER[name[0]] = self
 
-    def __str__(self):
-        return self.name
-
     def __repr__(self):
         return self.name
 
@@ -42,18 +45,25 @@ LogLevel.ERROR = LogLevel(4, 'ERROR')
 LogLevel.FATAL = LogLevel(5, 'FATAL')
 
 
-class LogEntry(collections.namedtuple('LogEntry', 'ts fid i flowid level thread clazz method file line message')):
+LOG_ENTRY_FIELDS = 'timestamp reader_id entry_number flow_id level thread class_ method source_file line message'
 
-    def as_logstash(self):
-        d = self._asdict()
-        d['@timestamp'] = self.ts
-        d['level'] = str(self.level)
-        d['class'] = self.clazz
-        del d['clazz']
-        del d['fid']
-        del d['i']
-        del d['ts']
-        return d
+class LogEntry(collections.namedtuple('LogEntry', LOG_ENTRY_FIELDS)):
+
+    __slots__ = ()
+
+    def as_logstash(self, logfile_name):
+        return {
+            '@timestamp': self.timestamp,
+            'flowid': self.flow_id,
+            'level': str(self.level),
+            'thread': self.thread,
+            'class': self.class_,
+            'method': self.method,
+            'file': self.source_file,
+            'line': self.line,
+            'message': self.message,
+            'logfile': logfile_name
+        }
 
 
 class Log4jParser(object):
@@ -123,7 +133,7 @@ class Log4jParser(object):
         # There cannot be more than five columns (not counting the date column).
         return
 
-    def read(self, fid, logfile):
+    def read(self, reader_id, logfile):
         """read log4j formatted log file"""
 
         assert 'b' in getattr(logfile, 'mode', 'rb'), 'The file has not been opened in binary mode.'
@@ -136,14 +146,14 @@ class Log4jParser(object):
         location_column_index = self.location_column_index
         message_column_index = self.message_column_index
 
-        i = 0
+        entry_number = 0
         while True:
             line = logfile.readline()
             if not line:
                 break
             try:
-                ts = line[:23]
-                if not ts.startswith('20'):
+                timestamp = line[:23]
+                if not timestamp.startswith('20'):
                     logging.warn('Skipped a line because it does not appear to start with a date: "%s".', line)
                     continue
                 columns = line[24:].split(delimiter, maxsplit)
@@ -153,26 +163,26 @@ class Log4jParser(object):
                 level = self._read_log_level(columns, level_column_index)
                 flow_id = self._read_flow_id(columns, flow_id_column_index)
                 thread = self._read_thread(columns, thread_column_index)
-                class_, method, file_, line_number = self._read_code_position(columns, location_column_index)
+                class_, method, source_file, line_number = self._read_code_position(columns, location_column_index)
                 message = self._read_message(columns, message_column_index, logfile)
             except Exception:  #pragma: nocover
                 # This shouldn't actually be possible.
-                logging.exception('Failed to parse line "%s" of %s', line, fid)
+                logging.exception('Failed to parse line "%s" of %s', line, reader_id)
             else:
                 yield LogEntry(
-                    fid=fid,
-                    ts=ts,
-                    i=i,
-                    flowid=flow_id,
+                    reader_id=reader_id,
+                    timestamp=timestamp,
+                    entry_number=entry_number,
+                    flow_id=flow_id,
                     level=level,
                     thread=thread,
-                    clazz=class_,
+                    class_=class_,
                     method=method,
-                    file=file_,
+                    source_file=source_file,
                     line=line_number,
                     message=message,
                 )
-            i += 1
+            entry_number += 1
 
     def get_time_string(self, line):
         if self.is_continuation_line(line):
@@ -199,14 +209,14 @@ class Log4jParser(object):
         return self._split_code_position(columns[index])
 
     def _is_valid_code_position(self, string):
-        class_, method, file_, line_number = self._split_code_position(string)
-        return bool(class_ and method and file_ and line_number != -1)
+        class_, method, source_file, line_number = self._split_code_position(string)
+        return bool(class_ and method and source_file and line_number != -1)
 
     def _split_code_position(self, string):
         class_and_method, _, file_and_line_number = string.rstrip(':)').rpartition('(')
         class_, _, method = class_and_method.rpartition('.')
-        file_, _, line_number = file_and_line_number.partition(':')
-        return class_, method, file_, try_parsing_int(line_number, default=-1)
+        source_file, _, line_number = file_and_line_number.partition(':')
+        return class_, method, source_file, try_parsing_int(line_number, default=-1)
 
     def _read_message(self, columns, index, logfile):
         lines = [columns[index]]
@@ -227,15 +237,6 @@ def try_parsing_int(string, default=None):
         return int(string)
     except ValueError:
         return default
-
-
-def parse_timestamp(ts):
-    """takes a timestamp such as 2011-09-18 16:00:01,123"""
-
-    if len(ts) < 19:
-        ts += ':00'
-    struct = time.strptime(ts[:19], '%Y-%m-%d %H:%M:%S')
-    return time.mktime(struct)
 
 
 class Watcher:
@@ -284,45 +285,34 @@ class Watcher:
             pass
 
 
-class LogAggregator(object):
+class OrderedLogAggregator(object):
 
-    def __init__(self, file_names, sleep=0.5):
-        self.file_names = file_names
-        n = len(file_names)
+    def __init__(self, file_names):
         self.entries = []
-        self.open_files = set(range(n))
-        self._sleep = sleep
+        self.open_files = set(range(len(file_names)))
 
     def add(self, entry):
         heapq.heappush(self.entries, entry)
 
-        # if
-        # print self.entries[-10:]
-        # print entry.fid, entry.ts, entry.level, entry.thread, entry.source_class, entry.source_location, entry.message
-
     def eof(self, fid):
         self.open_files.remove(fid)
+
+    def __len__(self):
+        return len(self.entries)
 
     def get(self):
         while self.open_files or self.entries:
             try:
-                entry = heapq.heappop(self.entries)
-                yield entry
+                yield heapq.heappop(self.entries)
             except IndexError:
-                if self._sleep:
-                    logging.debug('Sleeping %ss..', self._sleep)
-                    time.sleep(self._sleep)
                 pass
 
 
 class NonOrderedLogAggregator(object):
 
-    def __init__(self, file_names, sleep=0.5):
-        self.file_names = file_names
-        n = len(file_names)
+    def __init__(self, file_names):
         self.entries = collections.deque()
-        self.open_files = set(range(n))
-        self._sleep = sleep
+        self.open_files = set(range(len(file_names)))
 
     def add(self, entry):
         self.entries.append(entry)
@@ -330,14 +320,13 @@ class NonOrderedLogAggregator(object):
     def eof(self, fid):
         self.open_files.remove(fid)
 
-    def len(self):
+    def __len__(self):
         return len(self.entries)
 
     def get(self):
         while True:
             try:
-                entry = self.entries.popleft()
-                yield entry
+                yield self.entries.popleft()
             except IndexError:
                 return
 
@@ -355,62 +344,54 @@ COLORS = [
 
 class RedisOutputThread(Thread):
 
+    REDIS_PUSH_INTERVAL = 1  # seconds
+    REDIS_ERROR_RETRY_DELAY = 5  # seconds
+    MAX_CHUNK_SIZE = 1000  # entries
+
     def __init__(self, aggregator, host, port, namespace):
         Thread.__init__(self, name='RedisOutputThread')
         self.aggregator = aggregator
         self._redis_namespace = namespace
-        import redis
         self._redis = redis.StrictRedis(host, port, socket_timeout=10)
-        self._connect()
-
-    def _connect(self):
-        wait = -1
-        while True:
-            wait += 1
-            time.sleep(wait)
-            if wait == 20:
-                return False
-
-            if wait > 0:
-                logging.info('Retrying connection, attempt {0}'.format(wait + 1))
-
-            try:
-                self._redis.ping()
-                break
-            except UserWarning:
-                traceback.print_exc()
-            except Exception:
-                traceback.print_exc()
-
         self._pipeline = self._redis.pipeline(transaction=False)
 
     def run(self):
-        file_names = self.aggregator.file_names
+        # Performance!
+        namespace = self._redis_namespace
+        pipeline = self._pipeline
+        file_name_by_id = self.aggregator.file_names
 
-        total = 0
-        chunk_start = time.time()
-        write_interval = 1
+        logging.debug('Starting to push entries to Redis.')
+        last_report_timestamp = time.time()
+        time.sleep(self.REDIS_PUSH_INTERVAL)
+
         while True:
-            time.sleep(write_interval)
-            l = self.aggregator.len()
-            if l > 0:
-                i = 0
-                for entry in self.aggregator.get():
-                    d = entry.as_logstash()
-                    d['logfile'] = file_names[entry.fid]
-                    self._pipeline.rpush(self._redis_namespace, json.dumps(d))
-                    i += 1
-                    if i > l:
+            poppable_entry_count = min(self.MAX_CHUNK_SIZE, len(self.aggregator))
+
+            if poppable_entry_count > 0:
+                log_entries = itertools.islice(self.aggregator.get(), poppable_entry_count)
+                json_strings = [json.dumps(e.as_logstash(file_name_by_id[e.reader_id])) for e in log_entries]
+
+                while True:
+                    for j in json_strings:
+                        pipeline.rpush(namespace, j)
+                    try:
+                        pipeline.execute()
+                    except redis.exceptions.RedisError:
+                        message = 'Failed to push entries to Redis. Will retry in %d seconds.'
+                        logging.exception(message, self.REDIS_ERROR_RETRY_DELAY)
+                        logging.info('There are %s pushable entries queued.', len(json_strings) + len(self.aggregator))
+                        time.sleep(self.REDIS_ERROR_RETRY_DELAY)
+                    else:
                         break
-                total += i
-                try:
-                    self._pipeline.execute()
-                except:
-                    logging.exception('Redis connection failure')
+
+            if poppable_entry_count < self.MAX_CHUNK_SIZE:
                 now = time.time()
-                logging.debug('Pushed %s entries (%.1f/s), queue length %s', i, i / (now - chunk_start),
-                              self.aggregator.len())
-                chunk_start = now
+                message = 'Pushed %d entries to Redis. (%.1f entries/s; queue length %d)'
+                entries_per_second = len(json_strings) / (now - last_report_timestamp)
+                logging.debug(message, len(json_strings), entries_per_second, len(self.aggregator))
+                last_report_timestamp = now
+                time.sleep(self.REDIS_PUSH_INTERVAL)
 
 
 class OutputThread(Thread):
@@ -428,10 +409,10 @@ class OutputThread(Thread):
         trunc = self.truncate
         file_names = self.aggregator.file_names
         for entry in self.aggregator.get():
-            fd.write(file_names[entry.fid] + ' ')
+            fd.write(file_names[entry.reader_id] + ' ')
             fd.write('\033[97m')
             # do not print year:
-            fd.write(entry.ts[5:] + ' ')
+            fd.write(entry.timestamp[5:] + ' ')
             if entry.level == LogLevel.FATAL:
                 fd.write('\033[95m')
             elif entry.level == LogLevel.ERROR:
@@ -449,16 +430,16 @@ class OutputThread(Thread):
                 msg = msg.replace('\n', '\\n')
             if trunc and len(msg) > trunc:
                 msg = msg[:trunc].rsplit(' ', 1)[0] + '...'
-            if entry.flowid:
-                fd.write(COLORS[hash(entry.flowid) % 7])
-                fd.write(' ' + entry.flowid[:2] + '-' + entry.flowid[-2:])
+            if entry.flow_id:
+                fd.write(COLORS[hash(entry.flow_id) % 7])
+                fd.write(' ' + entry.flow_id[:2] + '-' + entry.flow_id[-2:])
                 fd.write('\033[0m')
             else:
                 fd.write('   -  ')
             fd.write(' ' + (entry.thread or '-'))
-            fd.write(' ' + entry.clazz)
+            fd.write(' ' + entry.class_)
             fd.write('.' + entry.method)
-            fd.write(' ' + entry.file)
+            fd.write(' ' + entry.source_file)
             fd.write(':' + str(entry.line))
             if entry.level == LogLevel.FATAL:
                 fd.write('\033[95m')
@@ -545,7 +526,7 @@ def main():
     if args.redis_host:
         aggregator = NonOrderedLogAggregator(file_names)
     else:
-        aggregator = LogAggregator(file_names)
+        aggregator = OrderedLogAggregator(file_names)
     readers = []
     fid = 0
     for fname_with_name in file_names:
@@ -568,10 +549,10 @@ def main():
             fpath,
             parser,
             aggregator,
-            tail=tail_lines,
+            tail_length=tail_lines,
             follow=args.follow,
-            filterdef=filterdef,
-            sincedb=args.sincedb,
+            entry_filter=filterdef,
+            progress_file_path_prefix=args.sincedb,
         ))
         fid += 1
     for reader in readers:
@@ -583,6 +564,6 @@ def main():
     out.start()
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  #pragma: nocover
     main()
 
