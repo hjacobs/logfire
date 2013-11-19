@@ -5,7 +5,6 @@ import gzip
 import logging
 import os
 import redis
-import sys
 
 import logfire
 import logreader
@@ -123,7 +122,7 @@ class Log4jParserTests(TestCase):
 
         entries = list(Log4jParser().read(0, StringIO(self.sample_line)))
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].flowid, 'FlowID')
+        self.assertEqual(entries[0].flow_id, 'FlowID')
 
     def test_read_thread_strips_colons(self):
         """Trailing colons are correctly stripped from threads."""
@@ -137,7 +136,7 @@ class Log4jParserTests(TestCase):
 
         self.assertEqual(Log4jParser()._read_thread(['not a thread'], None), None)
 
-    def test_read_flow_id_in_context(self):
+    def test_read_thread_in_context(self):
         """The thread is correctly extracted from the log entry."""
 
         entries = list(Log4jParser().read(0, StringIO(self.sample_line)))
@@ -289,7 +288,7 @@ class LogReaderTests(TestCase):
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 31)
             self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:30,000')
-            self.assertEqual(reader.receiver.entries[30], 'EOF 0')        
+            self.assertEqual(reader.receiver.entries[30], 'EOF 0')
 
     def test_run_seek_tail_none(self):
         with prepared_reader(seconds=range(60)) as reader:
@@ -297,14 +296,14 @@ class LogReaderTests(TestCase):
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 61)
             self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:00,000')
-            self.assertEqual(reader.receiver.entries[60], 'EOF 0')        
+            self.assertEqual(reader.receiver.entries[60], 'EOF 0')
 
     def test_run_seek_tail_zero(self):
         with prepared_reader(seconds=range(60)) as reader:
             reader.tail_length = 0
             reader.run()
             self.assertEqual(len(reader.receiver.entries), 1)
-            self.assertEqual(reader.receiver.entries[0], 'EOF 0')   
+            self.assertEqual(reader.receiver.entries[0], 'EOF 0')
 
     def test_run_seek_first_unprocessed_position(self):
         with prepared_reader(seconds=range(60)) as reader:
@@ -529,7 +528,7 @@ class LogReaderTests(TestCase):
         self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
         self.assertEqual(reader.last_ensure_file_is_good_call_timestamp, 42)
         self.assertEqual(reader.last_save_progress_call_timestamp, 42)
-       
+
     ### tests for _ensure_file_is_good() ###
 
     def test_ensure_file_is_good_file_does_not_exist(self):
@@ -557,7 +556,7 @@ class LogReaderTests(TestCase):
             reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
             reader.logfile = f
             reader.logfile_id = get_device_and_inode_string(os.fstat(f.fileno()))
-            f.truncate(0) 
+            f.truncate(0)
             reader._ensure_file_is_good()
             self.assertFalse(f.closed)
             self.assertEqual(reader.logfile, f)
@@ -585,7 +584,7 @@ class LogReaderTests(TestCase):
         reader._make_progress_string = lambda: 'log.log 123g456 10 19'
         reader._save_progress()
         with open('progressf16c93d1167446f99a26837c0fdeac6fb73869794', 'rb') as f:
-            self.assertEqual(f.read(), 'log.log 123g456 10 19')        
+            self.assertEqual(f.read(), 'log.log 123g456 10 19')
 
     def test_save_progress_no_data(self):
         reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), progress_file_path_prefix='progress')
@@ -704,7 +703,7 @@ class RedisOutputThreadTests(TestCase):
                 self.assertTrue('"@timestamp": "{0}"'.format(count_start + i) in fake_redis.log[block_start + i])
                 self.assertTrue('"logfile": "log.log"' in fake_redis.log[block_start + i])
             self.assertEqual(fake_redis.log[block_start + 23], "execute()")
-        
+
         log = self.fake_logging.log
         self.assertEqual(log[0], '[DEBUG] Starting to push entries to Redis.')
         self.assertTrue(log[1].startswith('[DEBUG] Pushed 23 entries to Redis.'))
@@ -724,7 +723,7 @@ class RedisOutputThreadTests(TestCase):
                 self.assertTrue(fake_redis.log[block_start + i].startswith("rpush('NAMESPACE', '{"))
                 self.assertTrue('"@timestamp": "{0}"'.format(count_start + i) in fake_redis.log[block_start + i])
                 self.assertTrue('"logfile": "log.log"' in fake_redis.log[block_start + i])
-            self.assertEqual(fake_redis.log[block_start + 23], "execute()") 
+            self.assertEqual(fake_redis.log[block_start + 23], "execute()")
 
         log = self.fake_logging.log
         self.assertEqual(log[0], '[DEBUG] Starting to push entries to Redis.')
@@ -902,7 +901,7 @@ class FakeLogging(object):
     def add(self, level, message, *args):
         if len(args) == 1 and isinstance(args[0], dict):
             args = args[0]
-        self.log.append('[%s] %s' % (level, message % args))        
+        self.log.append('[%s] %s' % (level, message % args))
 
     def reset(self):
         self.log = []
