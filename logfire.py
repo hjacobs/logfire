@@ -519,7 +519,7 @@ def main():
             lo = getattr(LogLevel, lvl)
             filterdef.levels.add(lo)
 
-    tail_lines = 0
+    tail_lines = None
     if args.tail:
         tail_lines = int(args.tail_lines)
 
