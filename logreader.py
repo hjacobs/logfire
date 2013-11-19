@@ -6,6 +6,8 @@ import threading
 import time
 import os
 
+from common import LogFilter, LogLevel, get_device_and_inode_string
+
 
 class LogReader(threading.Thread):
 
@@ -13,6 +15,14 @@ class LogReader(threading.Thread):
     CHUNK_SIZE = 1024  # bytes
     ENSURE_FILE_IS_GOOD_CALL_INTERVAL = 2  # seconds
     SAVE_PROGRESS_CALL_INTERVAL = 5  # seconds
+    ADJUST_LOGLEVEL_SUPPRESSION_CALL_INTERVAL = 1  # seconds
+
+    START_SUPPRESSING_TRACE_ENTRIES_QUEUE_LENGTH = 10000
+    STOP_SUPPRESSING_TRACE_ENTRIES_QUEUE_LENGTH = 7500
+    START_SUPPRESSING_DEBUG_ENTRIES_QUEUE_LENGTH = 100000
+    STOP_SUPPRESSING_DEBUG_ENTRIES_QUEUE_LENGTH = 75000
+    START_SUPPRESSING_INFO_ENTRIES_QUEUE_LENGTH = 1000000
+    STOP_SUPPRESSING_INFO_ENTRIES_QUEUE_LENGTH = 750000
 
 
     def __init__(
@@ -41,6 +51,8 @@ class LogReader(threading.Thread):
         self.logfile_id = None
         self.last_ensure_file_is_good_call_timestamp = 0
         self.last_save_progress_call_timestamp = 0
+        self.last_adjust_loglevel_suppression_call_timestamp = 0
+        self.suppressed_log_level = -1
 
         if progress_file_path_prefix:
             self.progress_file_path = '{0}f{1}'.format(progress_file_path_prefix, hashlib.sha1(logfile_name).hexdigest())
@@ -65,7 +77,7 @@ class LogReader(threading.Thread):
         while True:
             entry_count = 0
             for entry in self.parser.read(reader_id, logfile):
-                if entry_filter.matches(entry):
+                if entry_filter.matches(entry) and entry.level.priority > self.suppressed_log_level:
                     receiver.add(entry)
                 entry_count += 1
                 if entry_count & 1023 == 0:
@@ -235,6 +247,10 @@ class LogReader(threading.Thread):
                 self.last_save_progress_call_timestamp = current_timestamp
                 self._save_progress()
 
+        if current_timestamp - self.last_adjust_loglevel_suppression_call_timestamp > self.ADJUST_LOGLEVEL_SUPPRESSION_CALL_INTERVAL:
+            self.last_adjust_loglevel_suppression_call_timestamp = current_timestamp
+            self._adjust_loglevel_suppression()
+
     def _ensure_file_is_good(self):
         """
         Ensures that the file the reader is tailing is the file it is supposed to be tailing.
@@ -260,6 +276,21 @@ class LogReader(threading.Thread):
             elif current_position > file_size:
                 logging.info('The file %s has been truncated.', self.logfile_name)
                 self.logfile.seek(0)
+
+    def _adjust_loglevel_suppression(self):
+        levels = LogLevel.TRACE, LogLevel.DEBUG, LogLevel.INFO
+        start_thresholds = [getattr(self, 'START_SUPPRESSING_{0}_ENTRIES_QUEUE_LENGTH'.format(l)) for l in levels]
+        stop_thresholds = [getattr(self, 'STOP_SUPPRESSING_{0}_ENTRIES_QUEUE_LENGTH'.format(l)) for l in levels]
+
+        for level, threshold in zip(levels, start_thresholds):
+            if len(self.receiver) >= threshold and level.priority > self.suppressed_log_level:
+                self.suppressed_log_level = level.priority
+                logging.info('Started suppressing %s entries. The queue has reached the length %d.', level, threshold)
+
+        for level, threshold in zip(levels, stop_thresholds):
+            if self.suppressed_log_level >= level.priority and len(self.receiver) <= threshold:
+                self.suppressed_log_level = level.priority - 1
+                logging.info('Stopped suppressing %s entries. The queue length has fallen below %d.', level, threshold)
 
     ### PROGRESS ###
 
@@ -298,26 +329,3 @@ class LogReader(threading.Thread):
             logging.exception('Failed to gather progress information for %s.', self.logfile_name)
             return None
 
-
-class LogFilter(object):
-
-    def __init__(self, levels=(), grep=None, time_from=None, time_to=None):
-        self.levels = set(levels)
-        self.grep = grep
-        self.time_from = time_from
-        self.time_to = time_to
-
-    def matches(self, entry):
-        ok = not self.levels or entry.level in self.levels
-        if ok and self.grep:
-            ok = self.grep in entry.message or self.grep in entry.class_
-        if ok and self.time_from:
-            ok = entry.timestamp >= self.time_from
-        if ok and self.time_to:
-            ok = entry.timestamp < self.time_to
-
-        return ok
-
-
-def get_device_and_inode_string(st):
-    return '%xg%x' % (st.st_dev, st.st_ino)
