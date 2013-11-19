@@ -10,7 +10,6 @@ import os
 import signal
 import sys
 import time
-import traceback
 from threading import Thread
 from argparse import ArgumentParser
 
@@ -474,7 +473,7 @@ def main():
     parser.add_argument('--redis-host', help='redis host')
     parser.add_argument('--redis-port', type=int, default=6379, help='redis port')
     parser.add_argument('--redis-namespace', help='redis namespace')
-    
+
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-t', '--tail', action='store_true', help='show last N lines (default 100)')
     group.add_argument('--time-from', metavar='DATETIME', help='only show log entries starting at DATETIME')

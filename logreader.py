@@ -1,4 +1,3 @@
-import errno
 import gzip
 import hashlib
 import io
@@ -165,7 +164,7 @@ class LogReader(threading.Thread):
                     newline_count += 1
                     if newline_count >= self.tail_length:
                         self.logfile.seek(chunk_index * self.CHUNK_SIZE + current_newline_position + 1)
-                        return    
+                        return
 
                 previous_newline_position = current_newline_position
                 current_newline_position = chunk.rfind('\n', 0, previous_newline_position)
@@ -242,10 +241,10 @@ class LogReader(threading.Thread):
         current file and tails the new file instead. If the current file position lies past the file's end, resets
         it to the file's beginning.
         """
-        
+
         try:
             stat_results = os.stat(self.logfile_name)
-        except OSError, e:
+        except OSError:
             logging.info('The file %s has been removed.', self.logfile_name)
         else:
             expected_logfile_id = self.logfile_id
