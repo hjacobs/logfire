@@ -288,6 +288,7 @@ class OrderedLogAggregator(object):
 
     def __init__(self, file_names):
         self.entries = []
+        self.file_names = file_names
         self.open_files = set(range(len(file_names)))
 
     def add(self, entry):
@@ -311,6 +312,7 @@ class NonOrderedLogAggregator(object):
 
     def __init__(self, file_names):
         self.entries = collections.deque()
+        self.file_names = file_names
         self.open_files = set(range(len(file_names)))
 
     def add(self, entry):
