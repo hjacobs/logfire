@@ -13,7 +13,8 @@ import time
 from threading import Thread
 from argparse import ArgumentParser
 
-from logreader import LogReader, LogFilter
+from common import LogLevel, LogFilter
+from logreader import LogReader
 
 try:
     import redis
@@ -21,28 +22,6 @@ except ImportError:  #pragma: nocover
     pass  # The module might not actually be required.
 
 LOG_FORMAT = '%(asctime)s %(levelname)s: %(message)s'
-
-
-class LogLevel(object):
-
-    FROM_FIRST_LETTER = {}
-
-    def __init__(self, priority, name):
-        self.priority = priority
-        self.name = name
-        LogLevel.FROM_FIRST_LETTER[name[0]] = self
-
-    def __repr__(self):
-        return self.name
-
-
-LogLevel.TRACE = LogLevel(0, 'TRACE')
-LogLevel.DEBUG = LogLevel(1, 'DEBUG')
-LogLevel.INFO = LogLevel(2, 'INFO')
-LogLevel.WARN = LogLevel(3, 'WARN')
-LogLevel.ERROR = LogLevel(4, 'ERROR')
-LogLevel.FATAL = LogLevel(5, 'FATAL')
-
 
 LOG_ENTRY_FIELDS = 'timestamp reader_id entry_number flow_id level thread class_ method source_file line message'
 

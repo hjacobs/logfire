@@ -8,8 +8,9 @@ import redis
 
 import logfire
 import logreader
-from logfire import Log4jParser, LogLevel, LogEntry, RedisOutputThread, NonOrderedLogAggregator, OrderedLogAggregator
-from logreader import LogReader, LogFilter, get_device_and_inode_string
+from common import LogLevel, LogFilter, get_device_and_inode_string
+from logfire import Log4jParser, LogEntry, RedisOutputThread, NonOrderedLogAggregator, OrderedLogAggregator
+from logreader import LogReader
 
 
 class Log4jParserTests(TestCase):
@@ -322,6 +323,25 @@ class LogReaderTests(TestCase):
             self.assertEqual(reader.receiver.entries[0].timestamp, '2000-01-01 00:00:30,000')
             self.assertEqual(reader.receiver.entries[30], 'EOF 0')
 
+    def test_run_with_loglevel_suppression(self):
+        with open('log.log', 'wb') as f:
+            f.write('2000-01-01 00:00:00,000 FlowID INFO Thread C.m(C.java:23) Info!\n')
+            f.write('2000-01-01 00:00:01,000 FlowID ERROR Thread C.m(C.java:23) Error!\n')
+            f.write('2000-01-01 00:00:02,000 FlowID TRACE Thread C.m(C.java:23) Trace!\n')
+            f.write('2000-01-01 00:00:03,000 FlowID WARNING Thread C.m(C.java:23) Warning!\n')
+            f.write('2000-01-01 00:00:04,000 FlowID FATAL Thread C.m(C.java:23) Fatal!')
+            f.write('2000-01-01 00:00:05,000 FlowID DEBUG Thread C.m(C.java:23) Debug!')
+        reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver())
+        reader.suppressed_log_level = 1
+        reader._maybe_do_housekeeping = lambda self: None
+        reader.run()
+        self.assertEqual(reader.receiver.entries[0].level, LogLevel.INFO)
+        self.assertEqual(reader.receiver.entries[1].level, LogLevel.ERROR)
+        self.assertEqual(reader.receiver.entries[2].level, LogLevel.WARN)
+        self.assertEqual(reader.receiver.entries[3].level, LogLevel.FATAL)
+        self.assertEqual(reader.receiver.entries[4], 'EOF 0')
+        self.assertEqual(len(reader.receiver.entries), 5)
+
     ### tests for _open_file() ###
 
     def test_open_file_with_regular_file(self):
@@ -500,34 +520,42 @@ class LogReaderTests(TestCase):
         reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), progress_file_path_prefix='progress')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
+        reader._adjust_loglevel_suppression = lambda: called.append('_adjust_loglevel_suppression')
         reader._maybe_do_housekeeping(23)
-        self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
+        self.assertEqual(called, ['_ensure_file_is_good', '_save_progress', '_adjust_loglevel_suppression'])
         self.assertEqual(reader.last_ensure_file_is_good_call_timestamp, 23)
         self.assertEqual(reader.last_save_progress_call_timestamp, 23)
+        self.assertEqual(reader.last_adjust_loglevel_suppression_call_timestamp, 23)
 
     def test_maybe_do_housekeeping_second_time_too_early(self):
         called = []
         reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), progress_file_path_prefix='progress')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
+        reader._adjust_loglevel_suppression = lambda: called.append('_adjust_loglevel_suppression')
         reader.last_ensure_file_is_good_call_timestamp = 23
         reader.last_save_progress_call_timestamp = 23
-        reader._maybe_do_housekeeping(24)
+        reader.last_adjust_loglevel_suppression_call_timestamp = 23
+        reader._maybe_do_housekeeping(23.5)
         self.assertEqual(called, [])
         self.assertEqual(reader.last_ensure_file_is_good_call_timestamp, 23)
         self.assertEqual(reader.last_save_progress_call_timestamp, 23)
+        self.assertEqual(reader.last_adjust_loglevel_suppression_call_timestamp, 23)
 
     def test_maybe_do_housekeeping_second_time_late_enough(self):
         called = []
         reader = LogReader(0, 'log.log', Log4jParser(), FakeReceiver(), progress_file_path_prefix='progress')
         reader._ensure_file_is_good = lambda: called.append('_ensure_file_is_good')
         reader._save_progress = lambda: called.append('_save_progress')
+        reader._adjust_loglevel_suppression = lambda: called.append('_adjust_loglevel_suppression')
         reader.last_ensure_file_is_good_call_timestamp = 23
         reader.last_save_progress_call_timestamp = 23
+        reader.last_adjust_loglevel_suppression_call_timestamp = 23
         reader._maybe_do_housekeeping(42)
-        self.assertEqual(called, ['_ensure_file_is_good', '_save_progress'])
+        self.assertEqual(called, ['_ensure_file_is_good', '_save_progress', '_adjust_loglevel_suppression'])
         self.assertEqual(reader.last_ensure_file_is_good_call_timestamp, 42)
         self.assertEqual(reader.last_save_progress_call_timestamp, 42)
+        self.assertEqual(reader.last_adjust_loglevel_suppression_call_timestamp, 42)
 
     ### tests for _ensure_file_is_good() ###
 
@@ -575,6 +603,38 @@ class LogReaderTests(TestCase):
             self.assertEqual(reader.logfile, f)
             self.assertEqual(f.tell(), 10)
             self.assertEqual(self.fake_logging.log, [])
+
+    ### tests for _adjust_loglevel_suppression() ###
+
+    def test_adjust_loglevel_suppression(self):
+        fake_receiver = [1]
+        reader = LogReader(0, 'log.log', Log4jParser(), fake_receiver)
+        reader.START_SUPPRESSING_TRACE_ENTRIES_QUEUE_LENGTH = 2
+        reader.STOP_SUPPRESSING_TRACE_ENTRIES_QUEUE_LENGTH = 1
+        reader.START_SUPPRESSING_DEBUG_ENTRIES_QUEUE_LENGTH = 4
+        reader.STOP_SUPPRESSING_DEBUG_ENTRIES_QUEUE_LENGTH = 3
+        reader.START_SUPPRESSING_INFO_ENTRIES_QUEUE_LENGTH = 6
+        reader.STOP_SUPPRESSING_INFO_ENTRIES_QUEUE_LENGTH = 5
+
+        reader._adjust_loglevel_suppression()
+        self.assertEqual(reader.suppressed_log_level, -1)
+
+        fake_receiver.append(2)
+        reader._adjust_loglevel_suppression()
+        self.assertEqual(reader.suppressed_log_level, 0)
+
+        fake_receiver.extend([3, 4])
+        reader._adjust_loglevel_suppression()
+        self.assertEqual(reader.suppressed_log_level, 1)
+
+        fake_receiver.remove(4)
+        reader._adjust_loglevel_suppression()
+        self.assertEqual(reader.suppressed_log_level, 0)
+
+        fake_receiver.extend([4, 5, 6])
+        reader._adjust_loglevel_suppression()
+        self.assertEqual(reader.suppressed_log_level, 2)
+
 
     ### tests for _save_progress() ###
 
@@ -799,6 +859,9 @@ class FakeReceiver(object):
 
     def __init__(self):
         self.entries = []
+
+    def __len__(self):
+        return len(self.entries)
 
     def add(self, entry):
         self.entries.append(entry)
