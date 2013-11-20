@@ -66,13 +66,13 @@ class LogReader(threading.Thread):
         self.parser.autoconfigure(self.logfile)
         self._seek_position()
 
+        self._maybe_do_housekeeping(time.time())
+
         # Performance!
         reader_id = self.reader_id
         logfile = self.logfile
         receiver = self.receiver
         entry_filter = self.entry_filter
-
-        self._maybe_do_housekeeping(time.time())
 
         while True:
             entry_count = 0
@@ -89,6 +89,7 @@ class LogReader(threading.Thread):
             if entry_count == 0:
                 time.sleep(self.NO_ENTRIES_SLEEP_INTERVAL)
                 self._maybe_do_housekeeping(time.time())
+                logfile = self.logfile
 
     ### FILES ###
 
