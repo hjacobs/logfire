@@ -364,6 +364,8 @@ class RedisOutputThread(Thread):
                         time.sleep(self.REDIS_ERROR_RETRY_DELAY)
                     else:
                         break
+            else:
+                json_strings = ()
 
             if poppable_entry_count < self.MAX_CHUNK_SIZE:
                 now = time.time()
