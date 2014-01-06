@@ -882,7 +882,7 @@ class FakeLogAggregator(object):
     def get(self):
         while True:
             self.entry_count += 1
-            yield LogEntry(str(self.entry_count), '123g456', 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            yield LogEntry(str(self.entry_count), '123g456', 0, 0, 0, 0, 0, 0, 0, 0, '\xbf')
 
 
 class FakeRedis(object):

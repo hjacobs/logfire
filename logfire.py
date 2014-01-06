@@ -39,7 +39,7 @@ class LogEntry(collections.namedtuple('LogEntry', LOG_ENTRY_FIELDS)):
             'method': self.method,
             'file': self.source_file,
             'line': self.line,
-            'message': self.message,
+            'message': self.message.decode('utf8', errors='replace'),
             'logfile': logfile_name
         }
 
@@ -364,6 +364,8 @@ class RedisOutputThread(Thread):
                         time.sleep(self.REDIS_ERROR_RETRY_DELAY)
                     else:
                         break
+            else:
+                json_strings = ()
 
             if poppable_entry_count < self.MAX_CHUNK_SIZE:
                 now = time.time()
