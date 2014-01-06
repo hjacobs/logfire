@@ -39,7 +39,7 @@ class LogEntry(collections.namedtuple('LogEntry', LOG_ENTRY_FIELDS)):
             'method': self.method,
             'file': self.source_file,
             'line': self.line,
-            'message': self.message,
+            'message': self.message.decode('utf8', errors='replace'),
             'logfile': logfile_name
         }
 
